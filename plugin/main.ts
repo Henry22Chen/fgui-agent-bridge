@@ -11,7 +11,7 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.8.5";
+const BRIDGE_VERSION = "0.8.6";
 const PROTOCOL_VERSION = "1.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -75,17 +75,17 @@ const animationPreviewContexts: { [key: string]: any } = {};
 // 资源加载期间保护异步请求；期限由 Editor update 驱动，客户端超时不作为取消信号。
 const spineWaits: Array<{ check: () => void, reject: (error: any) => void }> = [];
 let loader3dBusy = false;
-// Loader3D 不进入 Agent 事务；原生撤销回退也不能把这些未保存变更标成干净。
-const untrackedLoaderVersions = new WeakMap<object, number>();
+// Loader3D 和 Controller 不进入 Agent 事务；原生撤销不能把这些未保存变更标成干净。
+const untrackedDocumentVersions = new WeakMap<object, number>();
 
-function invalidateLoaderHistory(doc: any): void {
+function invalidateUntrackedHistory(doc: any): void {
     clearAgentHistory();
-    untrackedLoaderVersions.set(doc, doc.savedVersion);
+    untrackedDocumentVersions.set(doc, doc.savedVersion);
     doc.SetModified(true);
 }
 
 function applyNativeHistory(doc: any, undo: boolean): boolean {
-    const preserveDirty = doc.isModified && untrackedLoaderVersions.has(doc) && untrackedLoaderVersions.get(doc) === doc.savedVersion;
+    const preserveDirty = doc.isModified && untrackedDocumentVersions.has(doc) && untrackedDocumentVersions.get(doc) === doc.savedVersion;
     try { return undo ? doc.history.Undo() : doc.history.Redo(); }
     finally { if (preserveDirty) doc.SetModified(true); }
 }
@@ -342,7 +342,7 @@ async function setLoader3d(params: any): Promise<any> {
                 for (const key of LOADER3D_KEYS) obj[key] = desired[key];
                 doc.SetModified(true);
                 verifyObject(doc, obj, expected, false);
-                invalidateLoaderHistory(doc);
+                invalidateUntrackedHistory(doc);
                 doc.RefreshInspectors();
             } catch (error) {
                 let rollbackSucceeded = false;
@@ -351,20 +351,164 @@ async function setLoader3d(params: any): Promise<any> {
                     rollbackSucceeded = JSON.stringify(loader3dValues(obj)) === JSON.stringify(before);
                 } catch (_) { /* 回退失败保留实际状态，不能伪报恢复成功。 */ }
                 if (rollbackSucceeded) doc.SetModified(documentModifiedBefore);
-                else invalidateLoaderHistory(doc);
+                else invalidateUntrackedHistory(doc);
                 verificationError("editor_rejected", String(error), { mutationMayHaveOccurred: true, rollbackSucceeded, before, after: loader3dValues(obj), resourceFix });
             }
         }
         // 保存失败不尝试恢复磁盘；截图是独立只读工具，永远不触发此回退路径。
         try {
             const result = writeVerification(doc, obj, before, loader3dValues(obj), params, expected);
-            if (result.saved) untrackedLoaderVersions.delete(doc);
+            if (result.saved) untrackedDocumentVersions.delete(doc);
             return { ...result, validationStatus, agentUndoSupported: false, resourceFix };
         } catch (error) {
             error.details = { ...error.details, mutationMayHaveOccurred: true, diskState: "unknown", rollbackAttempted: false, before, after: loader3dValues(obj), resourceFix };
             throw error;
         }
     } finally { loader3dBusy = false; }
+}
+
+/** 当前文档根组件的控制器；嵌套组件应先打开其所属文档，避免改错资源。 */
+function controllerList(doc: any): any[] {
+    const list = doc.content.controllers, result: any[] = [];
+    for (let i = 0; i < list.Count; i++) result.push(list.get_Item(i));
+    return result;
+}
+
+function controllerSnapshot(c: any): any {
+    const pages: any[] = [], list = c.GetPages();
+    for (let i = 0; i < list.Count; i++) {
+        const page = list.get_Item(i);
+        pages.push({ id: String(page.id), name: String(page.name), index: i });
+    }
+    const index = c.selectedIndex;
+    return { name: String(c.name), pages, selectedIndex: index,
+        selectedPageId: pages[index] ? pages[index].id : null, selectedPage: pages[index] ? pages[index].name : null,
+        homePageType: c.homePageType || "", homePage: c.homePage || "" };
+}
+
+function requireControllerName(value: any): string {
+    // 页面列表以逗号分隔保存；拒绝无法无损往返的名称，不替用户裁剪或改名。
+    if (typeof value !== "string" || !value.trim() || /[,\x00-\x1f]/.test(value))
+        verificationError("invalid_argument", "名称不能为空或含逗号/控制字符", {});
+    return value;
+}
+
+function resolveController(doc: any, name: any): any {
+    requireControllerName(name);
+    const matches = controllerList(doc).filter(c => c.name === name);
+    if (matches.length !== 1) verificationError(matches.length ? "ambiguous_controller" : "controller_not_found", "控制器名称不存在或不唯一", { name });
+    return matches[0];
+}
+
+function resolveControllerPage(c: any, params: any): any {
+    const keys = ["pageId", "pageName", "pageIndex"].filter(key => params[key] !== undefined && params[key] !== null);
+    if (keys.length !== 1) verificationError("invalid_argument", "必须且只能提供 pageId、pageName、pageIndex 之一", {});
+    const key = keys[0], value = params[key];
+    if (key === "pageIndex" ? !Number.isInteger(value) || value < 0 : typeof value !== "string")
+        verificationError("invalid_argument", "页面定位参数类型或索引无效", {});
+    const pages = controllerSnapshot(c).pages;
+    const matches = pages.filter(p => key === "pageIndex" ? p.index === value : key === "pageId" ? p.id === value : p.name === value);
+    if (matches.length !== 1) verificationError(matches.length ? "ambiguous_page" : "page_not_found", "页面不存在或名称不唯一；优先使用 pageId", { value });
+    return matches[0];
+}
+
+/** 保存整个组件并回读 Controller XML；选中页不是运行时 homePage 配置。 */
+function finishControllerWrite(doc: any, c: any, before: any, params: any, changed: boolean): any {
+    const after = controllerSnapshot(c);
+    let saved = false, persisted = false;
+    if (params.save === true) {
+        try {
+            // 以宿主序列化结果为准，空控制器与省略的默认 selected 均保持原生语义。
+            const expected = c.Write();
+            doc.Save();
+            if (doc.isModified) throw new Error("保存后组件仍有未保存修改");
+            saved = true;
+            clearAgentHistory();
+            untrackedDocumentVersions.delete(doc);
+            const item = App.project.GetItemByURL(doc.content.resourceURL);
+            const xml = new (CS as any).FairyGUI.Utils.XML(String(IOFile.ReadAllText(item.file)));
+            const matches: any[] = [];
+            for (let i = 0; i < xml.elements.Count; i++) {
+                const node = xml.elements.get_Item(i);
+                if (String(node.name) === "controller" && String(node.GetAttribute("name")) === after.name) matches.push(node);
+            }
+            if (matches.length !== 1) throw new Error("组件 XML 控制器不存在或不唯一");
+            for (const key of ["name", "pages", "selected", "homePage", "homePageType"]) {
+                if (String(matches[0].GetAttribute(key) || "") !== String(expected.GetAttribute(key) || ""))
+                    throw new Error(`组件 XML 的 ${key} 与 Editor 不一致`);
+            }
+            persisted = true;
+        } catch (error) {
+            verificationError("persistence_failed", String(error), { before, after, saved, persisted: false,
+                mutationMayHaveOccurred: changed, diskState: "unknown", rollbackAttempted: false });
+        }
+    }
+    return { before, after, changed, saved, persisted, documentModified: Boolean(doc.isModified), agentUndoSupported: false,
+        note: "只操作当前文档控制器；页面 ID 保留。切页应用原生 Gear/联动，不修改运行时 homePage。save 保存整个组件。" };
+}
+
+function editController(action: string, params: any): any {
+    const doc = getActiveDocument();
+    if (params.save !== undefined && typeof params.save !== "boolean") verificationError("invalid_argument", "save 必须是布尔值", {});
+    let c: any, page: any, name: string, initialPages: string[];
+    if (action === "create_controller") {
+        name = requireControllerName(params.name);
+        if (controllerList(doc).some(value => value.name === name)) verificationError("controller_exists", "控制器名称已存在", { name });
+        initialPages = params.pages === undefined ? [] : params.pages;
+        if (!Array.isArray(initialPages)) verificationError("invalid_argument", "pages 必须是页面名称数组", {});
+        initialPages.forEach(requireControllerName);
+        if (new Set(initialPages).size !== initialPages.length) verificationError("duplicate_page", "页面名称不能重复", {});
+    } else {
+        c = resolveController(doc, params.controllerName);
+        if (action === "add_controller_page" || action === "rename_controller_page") {
+            name = requireControllerName(params.name);
+            if (action === "rename_controller_page") page = resolveControllerPage(c, params);
+            if (controllerSnapshot(c).pages.some(p => p.name === name && (!page || p.id !== page.id)))
+                verificationError("duplicate_page", "页面名称已存在", { name });
+        } else page = resolveControllerPage(c, params);
+    }
+    const before = c ? controllerSnapshot(c) : null;
+    const changed = action === "create_controller" || action === "add_controller_page"
+        || (action === "rename_controller_page" ? page.name !== name : before.selectedPageId !== page.id);
+    if (changed) {
+        // 没有完整 Controller/Gear/联动事务快照，旧 Agent 历史不能跨过这次编辑。
+        invalidateUntrackedHistory(doc);
+        try {
+            if (action === "create_controller") {
+                c = new (FairyEditor as any).FController();
+                c.name = name;
+                initialPages.forEach(value => c.AddPage(value));
+                doc.content.AddController(c);
+                if (initialPages.length) c.selectedIndex = 0;
+            } else if (action === "add_controller_page") {
+                c.AddPage(name);
+                // 原生 AddPage 不选择首个页面；为新建空控制器补上可见的初始状态。
+                if (!before.pages.length) c.selectedIndex = 0;
+            }
+            else if (action === "rename_controller_page") c.GetPages().get_Item(page.index).name = name;
+            else c.selectedIndex = page.index; // 原生 setter 应用 Gear/联动；不使用静默 SetSelectedIndex。
+            const after = controllerSnapshot(c);
+            if (action === "create_controller") {
+                if (controllerList(doc).indexOf(c) < 0 || !valuesEqual(after.pages.map(p => p.name), initialPages)
+                    || (initialPages.length && after.selectedIndex !== 0)) throw new Error("Editor 未接受新控制器或初始页面");
+            } else if (action === "add_controller_page") {
+                if (after.pages.length !== before.pages.length + 1 || after.pages[after.pages.length - 1].name !== name
+                    || !valuesEqual(after.pages.slice(0, -1), before.pages)
+                    || (before.pages.length ? after.selectedPageId !== before.selectedPageId : after.selectedIndex !== 0)) throw new Error("Editor 未按追加语义添加页面");
+            } else if (action === "rename_controller_page") {
+                const expected = before.pages.map(p => p.id === page.id ? { ...p, name } : p);
+                if (!valuesEqual(after.pages, expected) || after.selectedPageId !== before.selectedPageId) throw new Error("Editor 重命名结果或页面 ID 不符");
+            } else if (after.selectedPageId !== page.id) throw new Error("Editor 未停留在目标页面，可能存在联动");
+            doc.SetModified(true);
+            doc.RefreshInspectors();
+        } catch (error) {
+            // 切页可能已触发其他控制器，不能只改回 selectedIndex 就伪称完整回退。
+            invalidateUntrackedHistory(doc);
+            verificationError("editor_rejected", String(error), { before, after: c ? controllerSnapshot(c) : null,
+                mutationMayHaveOccurred: true, rollbackAttempted: false });
+        }
+    }
+    return finishControllerWrite(doc, c, before, params, changed);
 }
 
 function captureDocument(params: any, requestId: string): any {
@@ -569,7 +713,8 @@ function writeStatus(): void {
             "undo",
             "redo",
             "verify_document", "replace_object_resource", "get_text_style", "set_text_style",
-            "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor"
+            "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor",
+            "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"
         ]
     });
     lastStatusWrittenMs = Date.now();
@@ -2997,6 +3142,7 @@ function handleCommand(request: AgentRequest): any {
     if (loader3dBusy && ["ping", "get_project", "get_active_document", "list_packages", "list_items"].indexOf(action) < 0)
         verificationError("document_busy", "Loader3D 加载中，请等待当前请求完成", {});
     const actionsBlockedDuringPublish: { [action: string]: boolean } = {
+        create_controller: true, add_controller_page: true, rename_controller_page: true, set_controller_page: true,
         get_loader3d: true, set_loader3d: true, capture_document: true, fix_spine_anchor: true,
         open_document: true,
         create_component: true,
@@ -3026,6 +3172,8 @@ function handleCommand(request: AgentRequest): any {
         throw new Error(`FairyGUI 发布进行中，暂不能执行：${action}`);
 
     switch (action) {
+        case "get_controllers": return { documentUrl: getActiveDocument().content.resourceURL, controllers: controllerList(getActiveDocument()).map(controllerSnapshot) };
+        case "create_controller": case "add_controller_page": case "rename_controller_page": case "set_controller_page": return editController(action, params);
         case "get_loader3d": return getLoader3d(params);
         case "fix_spine_anchor": return fixSpineResource(resolveItem(params));
         case "set_loader3d": return setLoader3d(params);
@@ -3279,7 +3427,7 @@ function handleCommand(request: AgentRequest): any {
         case "discard_document": {
             const doc = getActiveDocument();
             doc.DiscardChanges();
-            untrackedLoaderVersions.delete(doc);
+            untrackedDocumentVersions.delete(doc);
             clearAgentHistory();
             return describeDocument(doc);
         }

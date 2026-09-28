@@ -201,6 +201,22 @@ def build_parser() -> argparse.ArgumentParser:
     preview_movieclip_parser.add_argument("--frame", type=int)
 
     subparsers.add_parser("active", help="读取当前文档")
+    subparsers.add_parser("controllers", help="读取当前文档控制器、页面和当前页")
+    controller_create = subparsers.add_parser("create-controller", help="创建控制器，默认不保存")
+    controller_create.add_argument("name")
+    controller_create.add_argument("--pages", nargs="*", default=[], help="初始页面名称，省略创建空控制器")
+    controller_create.add_argument("--save", action="store_true")
+    for command in ("add-controller-page", "rename-controller-page", "set-controller-page"):
+        controller_parser = subparsers.add_parser(command, help="编辑控制器页面，默认不保存；不支持删除")
+        controller_parser.add_argument("controller_name")
+        if command != "set-controller-page":
+            controller_parser.add_argument("name", help="新页面名称")
+        if command != "add-controller-page":
+            selector = controller_parser.add_mutually_exclusive_group(required=True)
+            selector.add_argument("--page-id")
+            selector.add_argument("--page-name")
+            selector.add_argument("--page-index", type=int)
+        controller_parser.add_argument("--save", action="store_true")
 
     tree_parser = subparsers.add_parser("tree", help="读取当前组件对象树")
     tree_parser.add_argument("--max-depth", type=int, default=12)
@@ -506,6 +522,19 @@ def main() -> int:
                 params["frame"] = args.frame
         elif args.command == "active":
             action = "get_active_document"
+        elif args.command == "controllers":
+            action = "get_controllers"
+        elif args.command == "create-controller":
+            action = "create_controller"
+            params = {"name": args.name, "pages": args.pages, "save": args.save}
+        elif args.command in ("add-controller-page", "rename-controller-page", "set-controller-page"):
+            action = args.command.replace("-", "_")
+            params = {"controllerName": args.controller_name, "save": args.save}
+            if args.command != "set-controller-page":
+                params["name"] = args.name
+            for key, value in (("pageId", getattr(args, "page_id", None)), ("pageName", getattr(args, "page_name", None)), ("pageIndex", getattr(args, "page_index", None))):
+                if value is not None:
+                    params[key] = value
         elif args.command == "tree":
             action = "get_tree"
             params = {"maxDepth": args.max_depth}

@@ -211,3 +211,9 @@ git diff --check
 Spine 导入结束后可调用 `fgui_fix_spine_anchor`；当前 Bridge 本身不提供 Spine 导入。绑定 resource_url 或插入 Spine 默认按 SpineFixer 修复包尺寸、锚点和 pma=false，并保存所属包元数据。此资源写入独立于组件 save=false，不能用文档 undo/discard 回滚；必须向用户区分 resourceFix 与组件保存结果。播放属性调整、查询和截图不自动修复。只支持已验证的 Spine 4.2 .skel；不支持版本或无有效包围盒需明确报错，可显式 fix_spine=false 跳过自动修复。
 
 Loader3D 实际修改会清空旧 Agent undo/redo；校验失败和无变化操作不清空。不得把缺图、PNG 解码失败当成修改失败：报告 manual_required 并要求用户自行验证。
+
+## Controller 基础编辑（0.8.6）
+
+先 `fgui_get_controllers` 读取当前文档控制器与稳定页面 ID，再创建控制器、追加页面、按 ID 重命名或切换当前页。只操作当前文档根组件；嵌套组件先打开所属文档。页面定位 ID/名称/索引三选一，重命名不改变页面 ID。本批不支持删除页面或控制器，也不编辑 Gear/联动。
+
+默认不保存；save=true 保存整个组件并回读 XML。切页通过原生 setter 应用 Gear/联动，不修改 homePage，也不保证重新打开后维持当前页。实际编辑清空旧 Agent 历史，不支持完整撤销；失败保留实际状态，不声称联动已回滚。需要查看切页效果时截图；缺图仍按既有规则提示人工验证、不回滚。

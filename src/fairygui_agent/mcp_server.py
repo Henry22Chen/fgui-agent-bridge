@@ -495,6 +495,51 @@ def fgui_select_object(
 
 
 @mcp.tool()
+def fgui_get_controllers() -> dict[str, Any]:
+    """读取当前文档根组件的控制器、页面 ID/名称/索引和当前页；嵌套组件需先打开所属文档。"""
+    return _client.call("get_controllers")
+
+
+@mcp.tool()
+def fgui_create_controller(name: str, page_names: list[str] | None = None, save: bool = False) -> dict[str, Any]:
+    """创建控制器，可指定初始页面名称；省略时创建空控制器，指定页面时选中第一页。重名拒绝，默认不保存，不支持 Agent undo。"""
+    return _client.call("create_controller", {"name": name, "pages": page_names if page_names is not None else [], "save": save})
+
+
+@mcp.tool()
+def fgui_add_controller_page(controller_name: str, name: str, save: bool = False) -> dict[str, Any]:
+    """在控制器末尾添加页面，保留已有页面 ID；默认不保存，save=true 保存整个组件并回读 XML。"""
+    return _client.call("add_controller_page", {"controllerName": controller_name, "name": name, "save": save})
+
+
+def _controller_page_target(page_id: str | None, page_name: str | None, page_index: int | None) -> dict[str, Any]:
+    values = {key: value for key, value in (("pageId", page_id), ("pageName", page_name), ("pageIndex", page_index)) if value is not None}
+    if len(values) != 1:
+        raise ValueError("必须且只能提供 page_id、page_name、page_index 之一；优先使用稳定 page_id")
+    return values
+
+
+@mcp.tool()
+def fgui_rename_controller_page(controller_name: str, name: str, page_id: str | None = None,
+                                page_name: str | None = None, page_index: int | None = None, save: bool = False) -> dict[str, Any]:
+    """重命名页面并保留 ID/Gear 引用；页面定位三选一，默认不保存，不支持删除或 Agent undo。"""
+    return _client.call("rename_controller_page", {"controllerName": controller_name, "name": name, "save": save,
+                                                    **_controller_page_target(page_id, page_name, page_index)})
+
+
+@mcp.tool()
+def fgui_set_controller_page(controller_name: str, page_id: str | None = None, page_name: str | None = None,
+                             page_index: int | None = None, save: bool = False) -> dict[str, Any]:
+    """切换当前页并应用原生 Gear/联动；不修改运行时 homePage，默认不保存，不支持 Agent undo。
+
+    页面定位三选一，名称重复时使用 page_id。save=true 保存整个组件并校验 XML。
+    失败可能已有联动效果，保留实际状态并报告，不假装完整回滚。
+    """
+    return _client.call("set_controller_page", {"controllerName": controller_name, "save": save,
+                                                 **_controller_page_target(page_id, page_name, page_index)})
+
+
+@mcp.tool()
 def fgui_get_loader3d(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, include_asset_info: bool = True) -> dict[str, Any]:
     """读取 Loader3D 和包内 Spine 动画/皮肤；加载失败明确返回列表不可用。"""
     return _client.call("get_loader3d", {"target": _target(object_id, object_path, object_name), "includeAssetInfo": include_asset_info}, timeout=12)

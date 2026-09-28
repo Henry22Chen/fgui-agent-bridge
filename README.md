@@ -2,7 +2,7 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.8.5`
+- **版本**：`0.8.6`
 - **队列协议**：`1.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
@@ -331,3 +331,21 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 - 异步响应在认领请求时固定目标工程目录，成功/失败回调不使用可能已切换的全局目录。
 - PNG 除块 CRC 外，还验证有界 zlib 解压、完整流、精确扫描行长度与滤波器值。支持 Unity 非交错 8-bit 灰度/RGB/灰度 Alpha/RGBA 截图；坏图或其它编码转 `manual_required`，要求用户自行验证，不回滚修改。
 - 验证与文件索引见 `tests/reports/spine-fixer-review-fixes.md`。
+
+## Controller 基础编辑（0.8.6）
+
+| MCP 工具 | 参数与作用 |
+| --- | --- |
+| `fgui_get_controllers` | 读取当前文档根组件所有控制器，包含页面 ID/名称/索引、当前页及只读 homePage 信息 |
+| `fgui_create_controller` | `name, page_names?, save=false`；缺省创建空控制器，指定页面时自动选中第一页 |
+| `fgui_add_controller_page` | `controller_name, name, save=false`；末尾追加，已有 ID 与顺序保留，空控制器的首个页面自动选中 |
+| `fgui_rename_controller_page` | `controller_name, name, page_id?/page_name?/page_index?, save=false`；只改名称，保留页面 ID |
+| `fgui_set_controller_page` | `controller_name, page_id?/page_name?/page_index?, save=false`；通过原生 setter 应用 Gear/联动 |
+
+页面定位三选一，优先使用稳定的 `page_id`；索引从 0 开始，重复名称拒绝按名称定位。新名称不允许空白、逗号或控制字符，同一控制器中新建页面名称不能重复。控制器名称必须唯一。嵌套组件需先打开所属文档，本批不开放删除控制器/页面、重排、Gear 编辑或联动配置编辑。
+
+默认只修改 Editor 内存；`save=true` 保存整个组件并回读实际 XML 中的控制器页面及 selected 字段。切换当前页不会修改运行时 `homePage`；Editor 重开文档可能按首页规则重选页面，不能将当前页保存当作运行时首页设置。实际改动清空旧 Agent undo/redo，不支持完整 Controller/Gear 联动撤销；未保存内容可通过 discard 放弃整个文档。无变化操作不清历史，但显式保存后清历史。写入或保存失败报告实际状态，不假装联动已回滚。
+
+CLI：`controllers`、`create-controller State --pages Idle Active --save`、`add-controller-page State Disabled`、`rename-controller-page State Enabled --page-id 1`、`set-controller-page State --page-index 1 --save`。全局 `--project` 放在子命令前。没有新增删除命令。
+
+验证结果及文件索引：`tests/reports/controller-basic-editing.md`。
