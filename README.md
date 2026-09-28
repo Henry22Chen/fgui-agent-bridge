@@ -2,7 +2,7 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.8.3`
+- **版本**：`0.8.5`
 - **队列协议**：`1.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
@@ -264,7 +264,7 @@ uv run fgui-agent preview-transition play fadeIn
 ## ⚠️ 当前限制
 
 - **兼容基线**：以 FairyGUI Editor `6.1.4` 为主要验证版本。
-- **动画类型**：专注于 FairyGUI 原生 Transition 与 MovieClip，不支持 Spine、DragonBones、Loader3D、SWF 等第三方动画格式。
+- **动画类型**：支持 FairyGUI 原生 Transition、MovieClip，以及已有包内 Spine 的 Loader3D 属性操作与组件截图；不支持 DragonBones、SWF、外部 Spine 导入或 Unity 运行时换装。
 - **资源管理边界**：暂不支持通用包内资源的任意重命名与跨包移动；MovieClip 删除需带引用校验与 `force=true`。
 - **平台环境**：macOS 已做完整端到端验证；Windows 建议在标准命令提示符/PowerShell 下验证路径格式。
 
@@ -303,3 +303,31 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 ## 📄 许可证
 
 [MIT License](LICENSE)
+
+## Loader3D / Spine 与组件视觉验证（0.8.5）
+
+- `fgui_get_loader3d(object_id|object_path|object_name, include_asset_info=true)`：读取资源、动画、皮肤、播放和布局信息；列表不可用时返回原因。
+- `fgui_set_loader3d(..., resource_url?, animation_name?, skin_name?, playing?, loop?, frame?, save=false, verify=true, skip_name_validation=false)`：仅修改当前文档直属 Loader3D；嵌套对象请先打开所属组件。仅支持已导入包内 Spine，DragonBones 不在首版范围。缺省保持原值，空字符串清除，不支持 Agent undo/redo。
+- 修改前加载资源与校验名称，等待最长 8 秒；跨帧期间拒绝冲突命令，文档/对象/属性变化或工程关闭使请求失效。跳过名称校验不能绕过加载失败、超时或资源类型校验。
+- 修改后 Editor 拒绝时尽力恢复原属性并返回回退结果；保存失败报告磁盘状态不确定，不宣称回滚或持久化成功。`verify_document` 支持 `resourceURL`、`animationName`、`skinName`、`playing`、`loop`、`frame`；类型为 `loader3d`。
+- `fgui_capture_document(scale=1, expected_document_url?)`：仅截当前组件，以 MCP 图像块返回。scale 最大 4，单边最大 4096，总像素最大 8388608，PNG 最大 16 MiB。仅写工程 `.agent/captures/`，超过一天的本工具截图会清理。
+- 成功获取图片为 `pending_review`，仍需 Agent 观察。视觉上大体正确即可，检查资源、位置、大小、皮肤、遮挡与可见性，不要求动画帧或像素与效果图完全一致。
+- 获取图片失败返回 `manual_required`、原因和人工检查指引，**必须要求用户自行验证，保留已完成修改，不自动 undo/discard**。结构、持久化与视觉结论分别报告。
+- `spineCaptureSupported` 是已测捕获路径的能力信息（6.1.4 实测），`spinePresentInTree` 仅表示存在资源；`spineCaptured=null` 表示本次图像尚需观察，不能由对象树自动判定成功。
+- CLI 对应 `get-loader3d --id ID`、`set-loader3d --id ID '{"skinName":"default"}' --save`、`capture-document --scale 1`。CLI 返回截图文件元数据，MCP 才返回图像块。
+- 不自动发布 UI 包，不验证 Unity 运行时换装。实机结果和限制见 `tests/reports/spine-visual-validation.md`。
+
+截图实现先以独立 UpdateContext 更新组件，消除 Editor 外层视口裁剪，再 GetScreenShot；finally 恢复 Stage 渲染并释放返回纹理。该处理已用高于视口的混合组件验证。
+
+## 0.8.5 审查修复与 SpineFixer
+
+- 新增 `fgui_fix_spine_anchor(url? | package_name + item_name/item_path)`，对应 CLI `fix-spine-anchor URL`。可在现有导入流程结束后独立调用；本轮没有增加 Spine 文件导入接口。
+- 算法来自工程 `SpineFixer`：读取 Spine **4.2 二进制 .skel** 的导出包围盒，宽高四舍五入，按原点比例和 Y 轴翻转换算 anchor，设置 `pma=false`。Editor 6.1.4 对小数锚点向零截断，MCP 显式使用相同宿主语义并回读校验。
+- 版本未知、头部截断、非有限值、零/负包围盒或整数越界明确失败，不猜测尺寸，不回退到默认 100×100。其它 Spine 版本或 JSON 格式暂不自动修复。
+- `fgui_set_loader3d(resource_url=..., fix_spine=true)` 与 `fgui_insert_object(..., fix_spine=true)` 默认先修复 Spine；仅调整播放/皮肤而未传 resource_url 时不隐式修复。只读 get/capture 不写资源。
+- 修复会保存**所属包的元数据**（与原 SpineFixer 一致），并回读 package.xml。该资源写入独立于组件 `save=false`，不能由文档 undo/discard 回滚。结果用 `resourceFix` 分开报告；组件后续失败也保留已完成资源修复的信息。
+- 可显式传 `fix_spine=false`，CLI 为 `--no-fix-spine`，沿用已修复资源或自行处理不支持版本。旧插件缺少修复能力时拒绝默认自动修复请求，不会静默忽略参数。
+- Loader3D 实际修改后清空旧 Agent undo/redo；校验失败、无变化操作保留原历史。保存失败仍清空旧历史；完整回退恢复写入前的 dirty 状态。MCP 原生 undo/redo 回退保持未保存 Loader3D 修改标记，保存或放弃后结束该保护。
+- 异步响应在认领请求时固定目标工程目录，成功/失败回调不使用可能已切换的全局目录。
+- PNG 除块 CRC 外，还验证有界 zlib 解压、完整流、精确扫描行长度与滤波器值。支持 Unity 非交错 8-bit 灰度/RGB/灰度 Alpha/RGBA 截图；坏图或其它编码转 `manual_required`，要求用户自行验证，不回滚修改。
+- 验证与文件索引见 `tests/reports/spine-fixer-review-fixes.md`。

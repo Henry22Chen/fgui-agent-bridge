@@ -64,6 +64,8 @@ ANIMATION_CAPABILITIES = frozenset(
     }
 )
 
+SPINE_CAPABILITIES = frozenset({"get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor"})
+
 
 class BridgeError(RuntimeError):
     """桥接器连接、协议或命令错误。"""
@@ -207,6 +209,13 @@ class BridgeClient:
     ) -> dict[str, Any]:
         context = self.project_context()
         status = self.ensure_ready()
+        if action in SPINE_CAPABILITIES and action not in status.get("capabilities", []):
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少能力：{action}，请同步并重新加载 0.8.5 或更高版本插件。")
+        # 旧插件会忽略未知字段；自动修复不能退化成看似成功的普通绑定/插入。
+        payload_params = params or {}
+        auto_fix = payload_params.get("fixSpine", True) and (action == "insert_object" or (action == "set_loader3d" and payload_params.get("url")))
+        if auto_fix and "fix_spine_anchor" not in status.get("capabilities", []):
+            raise BridgeError("FairyGUI Agent Bridge 缺少能力：fix_spine_anchor，请同步并重新加载 0.8.5 或更高版本插件。")
         if action in ANIMATION_CAPABILITIES:
             capabilities = {str(item) for item in status.get("capabilities", [])}
             if action not in capabilities:

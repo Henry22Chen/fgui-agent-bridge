@@ -199,3 +199,15 @@ git diff --check
 - 是否保存、发布、放弃或同步，以及作用范围；
 - 执行了哪些静态检查、MCP 握手和编辑器验证；
 - 哪些真实平台或环境仍未验证。
+
+## Loader3D 与视觉验证补充
+
+使用 `fgui_get_loader3d` 读取、`fgui_set_loader3d` 修改当前组件直属 Loader3D；已有包内 Spine 为首版范围，缺省保持、空串清除。保存后比对 XML；操作不进入 Agent undo/redo。跨帧操作返回 busy 时等待完成，不重复写入。
+
+修改完成后调用 `fgui_capture_document` 并观察 MCP 图像，按资源、布局、大小、皮肤、遮挡与可见性判断大体正确即可，不要求动画帧一致。若未获取图像，必须说明原因并要求用户在 Editor 自行验证，保留已完成修改，禁止因缺图自动回滚。`pending_review` 不是视觉通过；`manual_required` 不是结构或持久化失败。详见当前能力参考。
+
+## SpineFixer 与资源保存边界（0.8.5）
+
+Spine 导入结束后可调用 `fgui_fix_spine_anchor`；当前 Bridge 本身不提供 Spine 导入。绑定 resource_url 或插入 Spine 默认按 SpineFixer 修复包尺寸、锚点和 pma=false，并保存所属包元数据。此资源写入独立于组件 save=false，不能用文档 undo/discard 回滚；必须向用户区分 resourceFix 与组件保存结果。播放属性调整、查询和截图不自动修复。只支持已验证的 Spine 4.2 .skel；不支持版本或无有效包围盒需明确报错，可显式 fix_spine=false 跳过自动修复。
+
+Loader3D 实际修改会清空旧 Agent undo/redo；校验失败和无变化操作不清空。不得把缺图、PNG 解码失败当成修改失败：报告 manual_required 并要求用户自行验证。

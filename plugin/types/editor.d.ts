@@ -6,6 +6,15 @@
  * 大体积第三方声明文件，同时保留独立 TypeScript 构建能力。
  */
 declare namespace CS {
+    namespace FairyGUI {
+        class UpdateContext {
+            static working: boolean;
+            static current: UpdateContext;
+            Begin(): void;
+            End(): void;
+        }
+        const Stage: any;
+    }
     namespace System {
         const Array: any;
         const String: any;

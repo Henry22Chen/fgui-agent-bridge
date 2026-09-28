@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult
 
 from . import __version__
 from .animation_models import TransitionDefinition, TransitionItem
 from .bridge_client import BridgeClient
 from .editor_launcher import EditorLauncher
 from .project_locator import ProjectLocator
+from .capture import capture_result, manual_verification
 
 mcp = FastMCP(
     "FairyGUI Agent Bridge",
@@ -21,6 +23,8 @@ mcp = FastMCP(
         "创建组件或按钮会新增包资源，导入/替换图片、声音和 MovieClip 会写入磁盘，调用前必须确认包、目录、名称和冲突策略。"
         "Transition 编辑与已有 MovieClip 更新支持 Agent undo/redo；新建/删除资源不能完整撤销，且资源写入不能由 fgui_discard_document 回滚。"
         "动画预览只改变 Editor 当前状态，不保存资源默认属性。"
+        "Spine 修复会保存所属包；插入或明确绑定 Spine 默认修复尺寸、锚点和 PMA，独立于组件 save。"
+        "未获取截图时要求用户自行验证，保留修改，不自动回滚。"
         "只有用户明确要求时才调用保存工具。发布前先调用 fgui_get_publish_settings，"
         "并确认用户要求的包范围后再调用 fgui_publish。"
     ),
@@ -491,6 +495,53 @@ def fgui_select_object(
 
 
 @mcp.tool()
+def fgui_get_loader3d(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, include_asset_info: bool = True) -> dict[str, Any]:
+    """读取 Loader3D 和包内 Spine 动画/皮肤；加载失败明确返回列表不可用。"""
+    return _client.call("get_loader3d", {"target": _target(object_id, object_path, object_name), "includeAssetInfo": include_asset_info}, timeout=12)
+
+
+@mcp.tool()
+def fgui_set_loader3d(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None,
+                     resource_url: str | None = None, animation_name: str | None = None, skin_name: str | None = None,
+                     playing: bool | None = None, loop: bool | None = None, frame: int | None = None,
+                     save: bool = False, verify: bool = True, skip_name_validation: bool = False, fix_spine: bool = True) -> dict[str, Any]:
+    """修改当前组件直属 Loader3D；缺省不改，空字符串清除。默认不保存，不支持 Agent undo。
+
+    明确绑定 resource_url 时默认按 SpineFixer 修复并保存资源包，独立于组件 save。
+    截图与写操作独立；未获取图像应要求用户自行验证，不能因此回滚。
+    """
+    params = {"target": _target(object_id, object_path, object_name), "save": save, "verify": verify, "skipNameValidation": skip_name_validation, "fixSpine": fix_spine}
+    for key, value in (("url", resource_url), ("animationName", animation_name), ("skinName", skin_name), ("playing", playing), ("loop", loop), ("frame", frame)):
+        if value is not None:
+            params[key] = value
+    return _client.call("set_loader3d", params, timeout=12)
+
+
+@mcp.tool()
+def fgui_fix_spine_anchor(url: str | None = None, package_name: str | None = None, item_name: str | None = None, item_path: str | None = None) -> dict[str, Any]:
+    """按 SpineFixer 修复包内 Spine 4.2 .skel 的尺寸、锚点和 pma=false，并保存所属包。
+
+    导入完成后可独立调用。包元数据写入不受组件 save 控制，也不能由文档 undo/discard 回滚。
+    """
+    return _client.call("fix_spine_anchor", _resource_target(url, package_name, item_name, item_path))
+
+
+@mcp.tool()
+def fgui_capture_document(scale: float = 1, expected_document_url: str | None = None) -> CallToolResult:
+    """返回当前组件 PNG 图像块；大体正确即可，不要求动画帧一致。
+
+    获取图片失败时保留修改并要求用户在 Editor 自行验证；图片返回后仍需观察，不能自动宣称视觉通过。
+    """
+    try:
+        # 请求前固定工程路径，避免响应后工程选择变化导致读取另一工程。
+        root = _client.project_context().queue_root
+        result = _client.call("capture_document", {"scale": scale, "expectedDocumentUrl": expected_document_url}, timeout=20)
+        return capture_result(root, result)
+    except Exception as error:
+        return manual_verification(str(error))
+
+
+@mcp.tool()
 def fgui_set_property(
     property_name: str,
     value: Any,
@@ -548,9 +599,13 @@ def fgui_insert_object(
     y: float = 0,
     name: str | None = None,
     insert_index: int | None = None,
+    fix_spine: bool = True,
 ) -> dict[str, Any]:
-    """插入已有 ui:// 资源但不保存；结构操作不能由 Agent 属性事务栈撤销。"""
-    params: dict[str, Any] = {"url": url, "x": x, "y": y}
+    """插入已有资源，不保存组件；Spine 默认先修复并保存资源包，可用 fix_spine=false 跳过。
+
+    结构操作不能由 Agent 属性事务栈撤销；资源修复保存不受组件保存控制。
+    """
+    params: dict[str, Any] = {"url": url, "x": x, "y": y, "fixSpine": fix_spine}
     if name:
         params["name"] = name
     if insert_index is not None:

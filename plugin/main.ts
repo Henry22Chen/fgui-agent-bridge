@@ -11,7 +11,7 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.8.3";
+const BRIDGE_VERSION = "0.8.5";
 const PROTOCOL_VERSION = "1.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -72,6 +72,364 @@ let logFile = "";
 let initialized = false;
 let publishInProgress = false;
 const animationPreviewContexts: { [key: string]: any } = {};
+// 资源加载期间保护异步请求；期限由 Editor update 驱动，客户端超时不作为取消信号。
+const spineWaits: Array<{ check: () => void, reject: (error: any) => void }> = [];
+let loader3dBusy = false;
+// Loader3D 不进入 Agent 事务；原生撤销回退也不能把这些未保存变更标成干净。
+const untrackedLoaderVersions = new WeakMap<object, number>();
+
+function invalidateLoaderHistory(doc: any): void {
+    clearAgentHistory();
+    untrackedLoaderVersions.set(doc, doc.savedVersion);
+    doc.SetModified(true);
+}
+
+function applyNativeHistory(doc: any, undo: boolean): boolean {
+    const preserveDirty = doc.isModified && untrackedLoaderVersions.has(doc) && untrackedLoaderVersions.get(doc) === doc.savedVersion;
+    try { return undo ? doc.history.Undo() : doc.history.Redo(); }
+    finally { if (preserveDirty) doc.SetModified(true); }
+}
+
+function invalidateSpineWaits(): void {
+    for (const wait of spineWaits.splice(0)) wait.reject(new Error("工程关闭或插件卸载，请求已失效"));
+}
+
+function boundedSpineLoad(asset: any, valid: () => boolean): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const deadline = Date.now() + 8000;
+        let done = false;
+        const finish = (error?: any): void => {
+            if (done) return;
+            done = true;
+            const index = spineWaits.indexOf(wait);
+            if (index >= 0) spineWaits.splice(index, 1);
+            if (error) reject(error); else resolve();
+        };
+        const wait = { reject: (error: any) => finish(error), check: () => {
+            try {
+                if (!valid()) finish(new Error("文档、对象或属性已变化，请重新读取"));
+                else if (Date.now() >= deadline) finish(new Error("Spine 资源加载超时"));
+            } catch (error) { finish(error); }
+        } };
+        spineWaits.push(wait);
+        try { puerts.$promise(asset.Load()).then(() => { wait.check(); if (!done) finish(); }, finish); }
+        catch (error) { finish(error); }
+    });
+}
+
+const LOADER3D_KEYS = ["url", "animationName", "skinName", "playing", "loop", "frame"];
+
+/**
+ * 复用 SpineFixer 的 Spine 4.2 二进制头部布局与锚点算法。
+ * 版本、有限值及正尺寸必须先通过校验；空包围盒不能拿任意默认尺寸代替。
+ */
+function parseSpineBounds(bytes: Uint8Array): any {
+    let pos = 8; // 4.2 hash 是两个裸 int32，不是长度前缀字符串。
+    const readByte = (): number => {
+        if (pos >= bytes.length) throw new Error("Spine 文件头截断");
+        return bytes[pos++];
+    };
+    let length = 0;
+    for (let shift = 0; ; shift += 7) {
+        const value = readByte();
+        if (shift > 28 || (shift === 28 && value > 15)) throw new Error("Spine 版本长度无效");
+        length += (value & 127) * Math.pow(2, shift);
+        if (!(value & 128)) break;
+    }
+    if (length < 2 || length > 128 || pos + length - 1 + 16 > bytes.length) throw new Error("Spine 版本或包围盒数据不完整");
+    let version = "";
+    for (let i = 0; i < length - 1; i++) version += String.fromCharCode(readByte());
+    if (!/^4\.2\.\d+$/.test(version)) verificationError("unsupported_spine_version", "修复器当前仅支持 Spine 4.2 二进制资源", { version });
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const x = view.getFloat32(pos, false), y = view.getFloat32(pos + 4, false);
+    const width = view.getFloat32(pos + 8, false), height = view.getFloat32(pos + 12, false);
+    const w = Math.round(width), h = Math.round(height);
+    if (![x, y, width, height].every(Number.isFinite) || w <= 0 || h <= 0 || w > 2147483647 || h > 2147483647)
+        throw new Error("Spine 包围盒必须是有限值且取整后尺寸为正整数");
+    // 保持原插件的先取整尺寸再乘 pivot；不要简化成 -x、height+y，否则小数尺寸会改变结果。
+    const calculatedAnchorX = w * (-x / width), calculatedAnchorY = h * (1 + y / height);
+    // Editor 6.1.4 的宿主赋值将正负小数都向零截断（Puerts int 字段语义）。
+    // 显式做相同转换，才能与原 SpineFixer 实际落盘结果一致，而非按公式小数误报失败。
+    const anchorX = Math.trunc(calculatedAnchorX), anchorY = Math.trunc(calculatedAnchorY);
+    if (![anchorX, anchorY].every(value => Number.isFinite(value) && value >= -2147483648 && value <= 2147483647))
+        throw new Error("Spine 锚点超出 Editor 整数范围");
+    return { version, x, y, width, height, calculatedAnchorX, calculatedAnchorY, corrected: { width: w, height: h, anchorX, anchorY, pma: false } };
+}
+
+function spineMetadata(item: any, asset: any): any {
+    return { width: item.width, height: item.height, anchorX: asset.anchorX, anchorY: asset.anchorY, pma: asset.pma };
+}
+
+/** 独立资源写操作：保存整个所属包的元数据，不受组件 save=false 控制，不支持文档 undo。 */
+function fixSpineResource(item: any): any {
+    if (!item || item.type !== FairyEditor.FPackageItemType.SPINE)
+        verificationError("unsupported_resource_type", "仅能修复包内 Spine 资源", {});
+    const sourceFile = item.file ? IOPath.GetFullPath(IOPath.Combine(item.owner.basePath, item.file)) : "";
+    if (!sourceFile || String(IOPath.GetExtension(sourceFile)).toLowerCase() !== ".skel")
+        verificationError("unsupported_spine_format", "修复器需要 Spine 4.2 .skel 文件", {});
+    let bounds: any;
+    try {
+        // 只读取固定大小头部，避免大型动画文件在 Puerts 中逐字节复制。
+        const stream = IOFile.OpenRead(sourceFile);
+        const header = new Uint8Array(512);
+        let count = 0;
+        try {
+            while (count < header.length) {
+                const value = stream.ReadByte();
+                if (value < 0) break;
+                header[count++] = value;
+            }
+        } finally { stream.Dispose(); }
+        bounds = parseSpineBounds(header.subarray(0, count));
+    } catch (error) {
+        if (error.code) throw error;
+        verificationError("invalid_spine_bounds", String(error), { sourceFile });
+    }
+    const asset = item.GetAsset();
+    if (!asset) verificationError("asset_not_ready", "Spine 资产不可用", {});
+    const before = spineMetadata(item, asset);
+    const expected = bounds.corrected;
+    const equal = (actual: any): boolean => Object.keys(expected).every(key => actual[key] === expected[key]);
+    const changed = !equal(before);
+    try {
+        if (changed) {
+            // 包元数据不属于组件事务；旧 Agent 撤销不能跨越这次资源修复。
+            clearAgentHistory();
+            item.width = expected.width;
+            item.height = expected.height;
+            asset.anchorX = expected.anchorX;
+            asset.anchorY = expected.anchorY;
+            asset.pma = false;
+            item.SetChanged();
+        }
+        if (!equal(spineMetadata(item, asset))) throw new Error("Editor 未接受 Spine 修复值");
+        // 即使内存已经正确，也需保存并回读，不能把一次失败保存后的重试当作持久化成功。
+        item.owner.Save();
+        const file = IOPath.Combine(item.owner.basePath, "package.xml");
+        const xml = new (CS as any).FairyGUI.Utils.XML(String(IOFile.ReadAllText(file)));
+        const resources = xml.GetNode("resources");
+        let node: any = null;
+        if (resources) for (let i = 0; i < resources.elements.Count; i++) {
+            const candidate = resources.elements.get_Item(i);
+            if (String(candidate.GetAttribute("id")) === String(item.id)) node = candidate;
+        }
+        if (!node || String(node.name) !== "spine") throw new Error("package.xml 未找到 Spine 资源");
+        const anchor = String(node.GetAttribute("anchor") || "0,0").split(",").map(Number);
+        const persisted = { width: Number(node.GetAttribute("width")), height: Number(node.GetAttribute("height")),
+            anchorX: anchor[0], anchorY: anchor[1], pma: String(node.GetAttribute("pma")) !== "false" };
+        if (!equal(persisted)) throw new Error("package.xml 的 Spine 修复值与预期不一致");
+        return { resourceURL: item.GetURL(), before, after: spineMetadata(item, asset), bounds, changed,
+            saved: true, persisted: true, diskWrite: true, file, note: "沿用 SpineFixer：修改包尺寸、锚点及 pma=false；已保存所属包，不受组件 save 控制。" };
+    } catch (error) {
+        verificationError("persistence_failed", String(error), { scope: "spine_resource", before, after: spineMetadata(item, asset),
+            sourceFile, mutationMayHaveOccurred: changed, diskState: "unknown", rollbackAttempted: false });
+    }
+}
+
+function loader3dValues(obj: any): any {
+    const values: any = {};
+    for (const key of LOADER3D_KEYS) values[key] = obj[key];
+    // Editor 新插入对象的未指定名称可为 null；保存为 XML 后是空串，两者语义相同。
+    for (const key of ["url", "animationName", "skinName"]) values[key] = values[key] || "";
+    return values;
+}
+
+function resolveLoader3d(doc: any, target: any, writing: boolean): any {
+    let obj: any;
+    try { obj = resolveObject(doc, target); }
+    catch (error) { verificationError("target_not_found", String(error), { target }); }
+    if (String(obj.objectType).toLowerCase() !== "loader3d")
+        verificationError("wrong_object_type", "目标不是 FLoader3D", { target });
+    if (writing) {
+        let owned = false;
+        for (let i = 0; i < doc.content.numChildren; i++) if (doc.content.GetChildAt(i) === obj) owned = true;
+        if (!owned) verificationError("nested_target", "请打开 Loader3D 所属组件后修改", { target });
+    }
+    return obj;
+}
+
+async function spineAssetInfo(url: string, valid: () => boolean): Promise<any> {
+    const item = App.project.GetItemByURL(url);
+    if (!item) verificationError("resource_not_found", "未找到 Spine 资源", { url });
+    if (item.type !== FairyEditor.FPackageItemType.SPINE)
+        verificationError("unsupported_resource_type", "首版仅支持包内 Spine", { url, type: item.type });
+    try {
+        const asset = item.GetAsset();
+        if (!asset) throw new Error("GetAsset 未返回资源");
+        await boundedSpineLoad(asset, valid);
+        const list = (value: any): string[] => {
+            if (!value) throw new Error("动画或皮肤列表尚不可用");
+            const result: string[] = [];
+            for (let i = 0; i < value.Count; i++) result.push(String(value.get_Item(i)));
+            return result;
+        };
+        try { return { animations: list(asset.animations), skins: list(asset.skins), assetInfoStatus: "ready" }; }
+        catch (error) { verificationError("asset_info_unavailable", String(error), { url }); }
+    } catch (error) {
+        if (error.code === "asset_info_unavailable") throw error;
+        verificationError("asset_not_ready", String(error), { url });
+    }
+}
+
+async function getLoader3d(params: any): Promise<any> {
+    const doc = getActiveDocument();
+    const obj = resolveLoader3d(doc, params.target, false);
+    const values = loader3dValues(obj);
+    const item = values.url ? App.project.GetItemByURL(values.url) : null;
+    const result: any = { target: targetSummary(obj, params.target), ...values,
+        resource: { url: values.url, exists: Boolean(item), id: item ? item.id : null, type: item ? item.type : null,
+            package: item && item.owner ? item.owner.name : null, packageId: item && item.owner ? item.owner.id : null },
+        assetInfoStatus: params.includeAssetInfo === false ? "not_requested" : "empty",
+        layout: { fill: obj.fill, align: obj.align, verticalAlign: obj.verticalAlign, autoSize: obj.autoSize, shrinkOnly: obj.shrinkOnly, color: colorToValue(obj.color) } };
+    if (values.url && params.includeAssetInfo !== false) {
+        try { Object.assign(result, await spineAssetInfo(values.url, () => App.activeDoc === doc && obj.url === values.url)); }
+        catch (error) { result.assetInfoStatus = "unavailable"; result.assetInfoError = { code: error.code, message: String(error) }; }
+    }
+    return result;
+}
+
+async function setLoader3d(params: any): Promise<any> {
+    if (loader3dBusy) verificationError("document_busy", "Loader3D 操作尚未完成", {});
+    loader3dBusy = true;
+    try {
+        const doc = getActiveDocument();
+        const project = App.project;
+        const obj = resolveLoader3d(doc, params.target, true);
+        const before = loader3dValues(obj);
+        const changes: any = {};
+        for (const key of LOADER3D_KEYS) {
+            if (params[key] === undefined) continue;
+            const value = params[key];
+            const valid = key === "playing" || key === "loop" ? typeof value === "boolean"
+                : key === "frame" ? Number.isInteger(value) && value >= 0 : typeof value === "string";
+            if (!valid) verificationError("invalid_argument", `无效 Loader3D 字段：${key}`, {});
+            changes[key] = value;
+        }
+        if (!Object.keys(changes).length) verificationError("invalid_argument", "至少指定一个修改字段", {});
+        const desired = { ...before, ...changes };
+        const valid = (): boolean => {
+            if (App.project !== project || App.activeDoc !== doc) return false;
+              try { return resolveLoader3d(doc, params.target, true) === obj && JSON.stringify(loader3dValues(obj)) === JSON.stringify(before); }
+                catch (_) { return false; }
+            };
+            let validationStatus = "verified";
+            if (desired.url) {
+                let info: any;
+                try { info = await spineAssetInfo(desired.url, valid); }
+                catch (error) {
+                    // 跳过名称枚举不允许绕过资源类型、资源不存在或文档失效检查。
+                    if (params.skipNameValidation !== true || error.code !== "asset_info_unavailable" || !valid()) throw error;
+                    validationStatus = "unverified";
+                }
+                if (info && params.skipNameValidation !== true) {
+                    if (desired.animationName && info.animations.indexOf(desired.animationName) < 0)
+                        verificationError("invalid_animation", "资源不包含指定动画", { animationName: desired.animationName });
+                    if (desired.skinName && info.skins.indexOf(desired.skinName) < 0)
+                        verificationError("invalid_skin", "资源不包含指定皮肤", { skinName: desired.skinName });
+                } else validationStatus = "unverified";
+            }
+            if (!valid()) verificationError("editor_rejected", "等待期间文档或对象发生变化，未应用修改", { mutationMayHaveOccurred: false });
+            // 只有明确绑定资源时自动修复；暂停、跳帧等操作不应隐式保存资源包。
+            const resourceFix = params.url !== undefined && desired.url && params.fixSpine !== false
+                ? fixSpineResource(App.project.GetItemByURL(desired.url)) : null;
+            const expected: any = { resourceURL: desired.url, animationName: desired.animationName, skinName: desired.skinName,
+                playing: desired.playing, loop: desired.loop, frame: desired.frame };
+            // 加载期间用户可能修改了无关字段；回退只恢复真正写入前的 dirty 状态。
+            const documentModifiedBefore = doc.isModified;
+            if (!valuesEqual(before, desired)) {
+              try {
+                // URL setter 可能重置播放属性，因此按完整最终快照恢复未传入字段。
+                for (const key of LOADER3D_KEYS) obj[key] = desired[key];
+                doc.SetModified(true);
+                verifyObject(doc, obj, expected, false);
+                invalidateLoaderHistory(doc);
+                doc.RefreshInspectors();
+            } catch (error) {
+                let rollbackSucceeded = false;
+                try {
+                    for (const key of LOADER3D_KEYS) obj[key] = before[key];
+                    rollbackSucceeded = JSON.stringify(loader3dValues(obj)) === JSON.stringify(before);
+                } catch (_) { /* 回退失败保留实际状态，不能伪报恢复成功。 */ }
+                if (rollbackSucceeded) doc.SetModified(documentModifiedBefore);
+                else invalidateLoaderHistory(doc);
+                verificationError("editor_rejected", String(error), { mutationMayHaveOccurred: true, rollbackSucceeded, before, after: loader3dValues(obj), resourceFix });
+            }
+        }
+        // 保存失败不尝试恢复磁盘；截图是独立只读工具，永远不触发此回退路径。
+        try {
+            const result = writeVerification(doc, obj, before, loader3dValues(obj), params, expected);
+            if (result.saved) untrackedLoaderVersions.delete(doc);
+            return { ...result, validationStatus, agentUndoSupported: false, resourceFix };
+        } catch (error) {
+            error.details = { ...error.details, mutationMayHaveOccurred: true, diskState: "unknown", rollbackAttempted: false, before, after: loader3dValues(obj), resourceFix };
+            throw error;
+        }
+    } finally { loader3dBusy = false; }
+}
+
+function captureDocument(params: any, requestId: string): any {
+    let texture: any = null;
+    let refreshStage = false;
+    const previousContext = CS.FairyGUI.UpdateContext.current;
+    try {
+        const doc = getActiveDocument();
+        const url = doc.content.resourceURL;
+        if (params.expectedDocumentUrl && params.expectedDocumentUrl !== url) throw new Error("活动文档与预期不符");
+        const scale = params.scale === undefined ? 1 : params.scale;
+        const width = Math.ceil(doc.content.width * scale), height = Math.ceil(doc.content.height * scale);
+        if (typeof scale !== "number" || !Number.isFinite(scale) || !Number.isFinite(width) || !Number.isFinite(height) || scale <= 0 || scale > 4 || width <= 0 || height <= 0 || width > 4096 || height > 4096 || width * height > 8388608)
+            throw new Error("截图尺寸超过限制：scale <= 4，单边 <= 4096，总像素 <= 8388608");
+        if (CS.FairyGUI.UpdateContext.working) throw new Error("Editor 正在渲染，请稍后重试截图");
+        // 6.1.4 的 GetScreenShot 不重建 2D 材质裁剪：直接截图会保留 Editor 视口裁剪，
+        // 而 Spine 仍可见。独立上下文保留组件自身 mask，去掉外层 Editor 的裁剪状态。
+        const context = new CS.FairyGUI.UpdateContext();
+        refreshStage = true;
+        context.Begin();
+        try { doc.content.displayObject.Update(context); }
+        finally { context.End(); }
+        texture = doc.content.displayObject.GetScreenShot(null, scale);
+        if (!texture || texture.width <= 0 || texture.height <= 0 || texture.width > 4096 || texture.height > 4096 || texture.width * texture.height > 8388608)
+            throw new Error("截图未返回有效尺寸");
+        const bytes = (UnityEngine as any).ImageConversion.EncodeToPNG(texture);
+        if (!bytes || bytes.Length < 24 || bytes.Length > 16777216) throw new Error("PNG 编码为空或超过 16 MiB");
+        const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+        for (let i = 0; i < signature.length; i++) if (Number(bytes.GetValue(i)) !== signature[i]) throw new Error("PNG 签名无效");
+        const folder = IOPath.Combine(queueRoot, "captures");
+        ensureDirectory(folder);
+        // 仅清理超过一天的本工具截图，给尚未消费图像的客户端留下读取时间。
+        const old = IODirectory.GetFiles(folder, "*.png");
+        for (let i = 0; i < old.Length; i++) {
+            const path = String(old.GetValue(i));
+            if (!/^capture-[a-zA-Z0-9_-]+\.png$/.test(IOPath.GetFileName(path))) continue;
+            try { if (Number(IOFile.GetLastWriteTimeUtc(path).Ticks) / 10000 - DOTNET_EPOCH_TICKS < Date.now() - 86400000) IOFile.Delete(path); } catch (_) { /* 清理失败不影响本次截图。 */ }
+        }
+        const name = `capture-${safeRequestId(requestId)}.png`;
+        IOFile.WriteAllBytes(IOPath.Combine(folder, name), bytes);
+        const hasSpine = (obj: any): boolean => {
+            if (String(obj.objectType).toLowerCase() === "loader3d" && obj.url) {
+                const item = App.project.GetItemByURL(obj.url);
+                if (item && item.type === FairyEditor.FPackageItemType.SPINE) return true;
+            }
+            for (let i = 0; i < (obj.numChildren || 0); i++) if (hasSpine(obj.GetChildAt(i))) return true;
+            return false;
+        };
+        return { path: `captures/${name}`, width: texture.width, height: texture.height, documentUrl: url,
+            captureMode: "component", spinePresentInTree: hasSpine(doc.content), spineCaptureSupported: String(UnityEngine.Application.version) === "6.1.4" ? true : null,
+            spineCaptured: null, visualVerificationStatus: "pending_review", mutationPerformed: false };
+    } catch (error) {
+        return { visualVerificationStatus: "manual_required", reason: String(error), mutationPerformed: false,
+            instruction: "未取得可验证图像。请在 FairyGUI Editor 自行检查资源、布局、遮挡、皮肤与可见性；已完成修改保留，不自动回滚。" };
+    } finally {
+        try { if (texture) (UnityEngine as any).Object.Destroy(texture); }
+        finally {
+            if (refreshStage) {
+                CS.FairyGUI.UpdateContext.current = previousContext;
+                // 恢复 Editor 画布的材质裁剪和渲染顺序，不修改/保存文档属性。
+                try { CS.FairyGUI.Stage.inst.ForceUpdate(); } catch (error) { appendLog(`capture stage refresh: ${error}`); }
+            }
+        }
+    }
+}
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -210,7 +568,8 @@ function writeStatus(): void {
             "discard_document",
             "undo",
             "redo",
-            "verify_document", "replace_object_resource", "get_text_style", "set_text_style"
+            "verify_document", "replace_object_resource", "get_text_style", "set_text_style",
+            "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor"
         ]
     });
     lastStatusWrittenMs = Date.now();
@@ -367,6 +726,7 @@ function describeObject(obj: FairyEditor.FObject, depth: number, maxDepth: numbe
         result.color = movieClip.color ? colorToValue(movieClip.color) : null;
     }
 
+    if (String(obj.objectType).toLowerCase() === "loader3d") Object.assign(result, loader3dValues(obj));
     const component = obj as FairyEditor.FComponent;
     if (typeof component.numChildren === "number")
         result.opaque = component.opaque;
@@ -941,7 +1301,7 @@ function targetSummary(obj: any, target: any): any {
 
 // Verification is deliberately limited to properties with a known serialized meaning.
 const VERIFIED_TEXT_KEYS = ["font", "fontSize", "color", "align", "vAlign", "autoSize", "lineGap", "letterSpacing", "width", "height", "x", "y"];
-const VERIFIED_KEYS = ["id", "name", "type", "resourceURL"].concat(VERIFIED_TEXT_KEYS);
+const VERIFIED_KEYS = ["id", "name", "type", "resourceURL"].concat(VERIFIED_TEXT_KEYS, ["animationName", "skinName", "playing", "loop", "frame"]);
 
 function verificationError(code: string, message: string, details: any): never {
     const error: any = new Error(message);
@@ -958,7 +1318,7 @@ function validateExpectations(expected: any): any {
         if (VERIFIED_KEYS.indexOf(key) < 0)
             verificationError("unsupported_property", `不支持验证属性：${key}`, { stage: "input", property: key });
         const value = expected[key];
-        if (value !== null && typeof value !== "string" && typeof value !== "number")
+        if (value !== null && typeof value !== "string" && typeof value !== "number" && !((key === "playing" || key === "loop") && typeof value === "boolean"))
             verificationError("invalid_argument", `expected.${key} 必须是字符串、数字或 null`, { stage: "input" });
         if (typeof value === "number" && !Number.isFinite(value))
             verificationError("invalid_argument", `expected.${key} 必须是有限数字`, { stage: "input" });
@@ -975,6 +1335,10 @@ function verifiedObjectValues(obj: any): any {
         value[key] = key === "color" ? colorHex(obj.color) : (obj[property] === undefined ? null : safeValue(obj[property]));
     }
     // An unspecified/default font is represented by the empty string in XML.
+    if (String(obj.objectType).toLowerCase() === "loader3d") {
+        Object.assign(value, loader3dValues(obj));
+        value.resourceURL = obj.url || "";
+    }
     if (value.font === null) value.font = "";
     return value;
 }
@@ -1017,7 +1381,16 @@ function persistedObjectValues(doc: any, obj: any): any {
     if (!node) verificationError("persistence_failed", "XML 中未找到目标对象", { stage: "xml", target: targetSummary(obj, null) });
     const attr = (key: string): any => { const v = node.GetAttribute(key); return v === null || v === undefined ? null : String(v); };
     const value: any = { id: attr("id") || "", name: attr("name") || "", type: String(node.name), resourceURL: null };
-    if (value.type === "loader") value.resourceURL = attr("url");
+    if (value.type === "loader3D") {
+        value.type = "loader3d";
+        value.resourceURL = attr("url") || "";
+        value.animationName = attr("animation") || "";
+        value.skinName = attr("skin") || "";
+        value.playing = attr("playing") !== "false";
+        value.loop = attr("loop") === "true";
+        value.frame = Number(attr("frame") || "0");
+    }
+    else if (value.type === "loader") value.resourceURL = attr("url");
     else if (attr("src")) value.resourceURL = `ui://${attr("pkg") || item.owner.id}${attr("src")}`;
     for (const key of ["font", "fontSize", "color", "align", "vAlign", "autoSize", "letterSpacing"])
         value[key] = attr(key);
@@ -2621,7 +2994,10 @@ function handleCommand(request: AgentRequest): any {
     if (requestProtocol && requestProtocol.split(".")[0] !== PROTOCOL_VERSION.split(".")[0])
         throw new Error(`协议版本不兼容：编辑器 ${PROTOCOL_VERSION}，客户端 ${requestProtocol}`);
 
+    if (loader3dBusy && ["ping", "get_project", "get_active_document", "list_packages", "list_items"].indexOf(action) < 0)
+        verificationError("document_busy", "Loader3D 加载中，请等待当前请求完成", {});
     const actionsBlockedDuringPublish: { [action: string]: boolean } = {
+        get_loader3d: true, set_loader3d: true, capture_document: true, fix_spine_anchor: true,
         open_document: true,
         create_component: true,
         import_image: true,
@@ -2650,6 +3026,10 @@ function handleCommand(request: AgentRequest): any {
         throw new Error(`FairyGUI 发布进行中，暂不能执行：${action}`);
 
     switch (action) {
+        case "get_loader3d": return getLoader3d(params);
+        case "fix_spine_anchor": return fixSpineResource(resolveItem(params));
+        case "set_loader3d": return setLoader3d(params);
+        case "capture_document": return captureDocument(params, request.id || String(Date.now()));
         case "ping":
             return {
                 bridgeVersion: BRIDGE_VERSION,
@@ -2815,18 +3195,25 @@ function handleCommand(request: AgentRequest): any {
         case "insert_object": {
             const doc = getActiveDocument();
             const item = resolveItem(params);
-            const x = Number(params.x || 0);
-            const y = Number(params.y || 0);
-            const insertIndex = params.insertIndex === undefined ? -1 : Number(params.insertIndex);
-            const obj = doc.InsertObject(item.GetURL(), new UnityEngine.Vector2(x, y), insertIndex);
-            if (!obj)
-                throw new Error(`插入对象失败：${item.GetURL()}`);
-            if (params.name)
-                obj.SetProperty("name", String(params.name));
-            doc.SetModified(true);
-            clearAgentHistory();
-            doc.SelectObject(obj, true, true);
-            return describeObject(obj, 0, 1);
+            const resourceFix = item.type === FairyEditor.FPackageItemType.SPINE && params.fixSpine !== false ? fixSpineResource(item) : null;
+            try {
+                const x = Number(params.x || 0);
+                const y = Number(params.y || 0);
+                const insertIndex = params.insertIndex === undefined ? -1 : Number(params.insertIndex);
+                const obj = doc.InsertObject(item.GetURL(), new UnityEngine.Vector2(x, y), insertIndex);
+                if (!obj)
+                    throw new Error(`插入对象失败：${item.GetURL()}`);
+                if (params.name)
+                    obj.SetProperty("name", String(params.name));
+                doc.SetModified(true);
+                clearAgentHistory();
+                doc.SelectObject(obj, true, true);
+                return { ...describeObject(obj, 0, 1), resourceFix };
+            } catch (error) {
+                // 包修复先于组件插入落盘；插入失败也必须告知客户端已有的独立资源写入。
+                if (resourceFix) error.details = { ...error.details, resourceFix, mutationMayHaveOccurred: true };
+                throw error;
+            }
         }
 
         case "remove_object": {
@@ -2892,6 +3279,7 @@ function handleCommand(request: AgentRequest): any {
         case "discard_document": {
             const doc = getActiveDocument();
             doc.DiscardChanges();
+            untrackedLoaderVersions.delete(doc);
             clearAgentHistory();
             return describeDocument(doc);
         }
@@ -2915,7 +3303,7 @@ function handleCommand(request: AgentRequest): any {
             }
 
             const doc = getActiveDocument();
-            const changed = doc.history.Undo();
+            const changed = applyNativeHistory(doc, true);
             return { changed, mode: "native", document: describeDocument(doc) };
         }
 
@@ -2938,7 +3326,7 @@ function handleCommand(request: AgentRequest): any {
             }
 
             const doc = getActiveDocument();
-            const changed = doc.history.Redo();
+            const changed = applyNativeHistory(doc, false);
             return { changed, mode: "native", document: describeDocument(doc) };
         }
 
@@ -2947,7 +3335,7 @@ function handleCommand(request: AgentRequest): any {
     }
 }
 
-function completeRequestSuccess(claimedPath: string, requestId: string, action: string, result: any): void {
+function completeRequestSuccess(claimedPath: string, requestId: string, action: string, result: any, replyFolder: string): void {
     const response: AgentResponse = {
         id: requestId,
         ok: true,
@@ -2955,13 +3343,13 @@ function completeRequestSuccess(claimedPath: string, requestId: string, action: 
         result,
         timestamp: nowIso()
     };
-    writeJsonAtomic(IOPath.Combine(responseFolder, `${requestId}.json`), response);
+    writeJsonAtomic(IOPath.Combine(replyFolder, `${requestId}.json`), response);
     appendLog(`ok ${requestId} ${action}`);
     if (IOFile.Exists(claimedPath))
         IOFile.Delete(claimedPath);
 }
 
-function completeRequestError(claimedPath: string, requestId: string, action: string, error: any): void {
+function completeRequestError(claimedPath: string, requestId: string, action: string, error: any, replyFolder: string): void {
     const message = error && error.message ? String(error.message) : String(error);
     const stack = error && error.stack ? String(error.stack) : undefined;
     const text = message.toLowerCase();
@@ -2977,7 +3365,7 @@ function completeRequestError(claimedPath: string, requestId: string, action: st
         error: { code: error && error.code ? String(error.code) : code, message, stack, details: error && error.details ? error.details : undefined },
         timestamp: nowIso()
     };
-    writeJsonAtomic(IOPath.Combine(responseFolder, `${requestId}.json`), response);
+    writeJsonAtomic(IOPath.Combine(replyFolder, `${requestId}.json`), response);
     appendLog(`error ${requestId} ${action}: ${message}`);
     App.consoleView.LogError(`[FGUI Agent Bridge] ${action}: ${message}`);
     if (IOFile.Exists(claimedPath))
@@ -2987,6 +3375,8 @@ function completeRequestError(claimedPath: string, requestId: string, action: st
 function processRequestFile(sourcePath: string): void {
     const fileName = IOPath.GetFileName(sourcePath);
     const claimedPath = IOPath.Combine(processingFolder, fileName);
+    // Promise 完成时工程可能已切换，响应必须归还认领请求时的工程。
+    const replyFolder = responseFolder;
     let request: AgentRequest = null;
     let requestId = safeRequestId(IOPath.GetFileNameWithoutExtension(fileName));
     let action = "unknown";
@@ -2997,7 +3387,7 @@ function processRequestFile(sourcePath: string): void {
         IOFile.Move(sourcePath, claimedPath);
 
         if (isStaleFile(claimedPath)) {
-            completeRequestError(claimedPath, requestId, action, new Error(`请求已过期（超过 ${REQUEST_MAX_AGE_MS / 1000} 秒未被认领，可能来自已中断的客户端）`));
+            completeRequestError(claimedPath, requestId, action, new Error(`请求已过期（超过 ${REQUEST_MAX_AGE_MS / 1000} 秒未被认领，可能来自已中断的客户端）`), replyFolder);
             return;
         }
 
@@ -3007,15 +3397,15 @@ function processRequestFile(sourcePath: string): void {
 
         const result = handleCommand(request);
         if (result && typeof result.then === "function") {
-            result.then((value: any) => completeRequestSuccess(claimedPath, requestId, action, value))
-                .catch((error: any) => completeRequestError(claimedPath, requestId, action, error));
+            result.then((value: any) => completeRequestSuccess(claimedPath, requestId, action, value, replyFolder))
+                .catch((error: any) => completeRequestError(claimedPath, requestId, action, error, replyFolder));
             return;
         }
 
-        completeRequestSuccess(claimedPath, requestId, action, result);
+        completeRequestSuccess(claimedPath, requestId, action, result, replyFolder);
     }
     catch (error) {
-        completeRequestError(claimedPath, requestId, action, error);
+        completeRequestError(claimedPath, requestId, action, error, replyFolder);
     }
 }
 
@@ -3033,6 +3423,7 @@ function pollRequests(): void {
 
 function onUpdate(): void {
     frameCount++;
+    for (const wait of spineWaits.slice()) wait.check();
 
     if (!initialized) {
         if (!initializeBridge())
@@ -3056,6 +3447,7 @@ function onProjectOpened(): void {
 }
 
 function onProjectClosed(): void {
+    invalidateSpineWaits();
     if (initialized)
         appendLog("project closed");
     initialized = false;
@@ -3076,6 +3468,7 @@ for (let i = 0; i < App.pluginManager.allPlugins.Count; i++) {
 
 if (pluginInfo) {
     pluginInfo.onDestroy = () => {
+        invalidateSpineWaits();
         App.remove_onUpdate(onUpdate);
         App.remove_onProjectOpened(onProjectOpened);
         App.remove_onProjectClosed(onProjectClosed);

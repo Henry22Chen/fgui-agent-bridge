@@ -223,6 +223,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     text_get_parser = subparsers.add_parser("get-text-style", help="读取文本样式")
     _add_target_arguments(text_get_parser)
+    loader_get = subparsers.add_parser("get-loader3d", help="读取 Loader3D 和 Spine 动画/皮肤")
+    _add_target_arguments(loader_get)
+    loader_get.add_argument("--no-asset-info", action="store_true")
+    loader_set = subparsers.add_parser("set-loader3d", help="修改当前文档直属 Loader3D，不支持 Agent undo")
+    _add_target_arguments(loader_set)
+    loader_set.add_argument("fields", help='JSON 字段对象：url、animationName、skinName、playing、loop、frame')
+    loader_set.add_argument("--save", action="store_true")
+    loader_set.add_argument("--skip-name-validation", action="store_true")
+    loader_set.add_argument("--no-fix-spine", action="store_true", help="绑定时不修复/保存 Spine 资源包")
+    spine_fix = subparsers.add_parser("fix-spine-anchor", help="按 SpineFixer 修复包内 Spine 并保存资源包")
+    spine_fix.add_argument("url")
+    capture = subparsers.add_parser("capture-document", help="截图返回文件元数据；缺图要求人工验证，不回滚")
+    capture.add_argument("--scale", type=float, default=1)
+    capture.add_argument("--expected-document-url")
     text_set_parser = subparsers.add_parser("set-text-style", help="设置文本样式")
     _add_target_arguments(text_set_parser)
     text_set_parser.add_argument("style", help="文本样式 JSON 对象")
@@ -241,6 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
     insert_parser.add_argument("--y", type=float, default=0)
     insert_parser.add_argument("--name")
     insert_parser.add_argument("--index", type=int, dest="insert_index")
+    insert_parser.add_argument("--no-fix-spine", action="store_true", help="插入时不修复/保存 Spine 资源包")
 
     remove_parser = subparsers.add_parser("remove", help="删除对象；保存前可用 discard 放弃修改")
     _add_target_arguments(remove_parser)
@@ -504,6 +519,24 @@ def main() -> int:
         elif args.command == "get-text-style":
             action = "get_text_style"
             params = {"target": target_from_args(args)}
+        elif args.command == "get-loader3d":
+            action = "get_loader3d"
+            params = {"target": target_from_args(args), "includeAssetInfo": not args.no_asset_info}
+            command_timeout = 12
+        elif args.command == "set-loader3d":
+            action = "set_loader3d"
+            fields = load_json_value(args.fields)
+            if not isinstance(fields, dict) or set(fields) - {"url", "animationName", "skinName", "playing", "loop", "frame"}:
+                raise ValueError("fields 必须是 Loader3D 字段对象")
+            params = {**fields, "target": target_from_args(args), "save": args.save, "skipNameValidation": args.skip_name_validation, "fixSpine": not args.no_fix_spine}
+            command_timeout = 12
+        elif args.command == "fix-spine-anchor":
+            action = "fix_spine_anchor"
+            params = {"url": args.url}
+        elif args.command == "capture-document":
+            action = "capture_document"
+            params = {"scale": args.scale, "expectedDocumentUrl": args.expected_document_url}
+            command_timeout = 20
         elif args.command == "set-text-style":
             action = "set_text_style"
             params = {"target": target_from_args(args), "style": load_json_value(args.style), "save": args.save, "verify": True}
@@ -526,7 +559,7 @@ def main() -> int:
             }
         elif args.command == "insert":
             action = "insert_object"
-            params = {"url": args.url, "x": args.x, "y": args.y}
+            params = {"url": args.url, "x": args.x, "y": args.y, "fixSpine": not args.no_fix_spine}
             if args.name:
                 params["name"] = args.name
             if args.insert_index is not None:
