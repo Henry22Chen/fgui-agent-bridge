@@ -23,6 +23,7 @@ mcp = FastMCP(
         "创建组件或按钮会新增包资源，导入/替换图片、声音和 MovieClip 会写入磁盘，调用前必须确认包、目录、名称和冲突策略。"
         "Transition 编辑与已有 MovieClip 更新支持 Agent undo/redo；新建/删除资源不能完整撤销，且资源写入不能由 fgui_discard_document 回滚。"
         "动画预览只改变 Editor 当前状态，不保存资源默认属性。"
+        "Gear 编辑前先读取配置；set_gear 完整替换一个 Gear，未列页面回退默认值。display 空列表表示全页可见。"
         "Spine 修复会保存所属包；插入或明确绑定 Spine 默认修复尺寸、锚点和 PMA，独立于组件 save。"
         "未获取截图时要求用户自行验证，保留修改，不自动回滚。"
         "只有用户明确要求时才调用保存工具。发布前先调用 fgui_get_publish_settings，"
@@ -492,6 +493,32 @@ def fgui_select_object(
 ) -> dict[str, Any]:
     """通过对象 ID、对象树路径或唯一名称选择一个对象。"""
     return _client.call("select_object", {"target": _target(object_id, object_path, object_name)})
+
+
+@mcp.tool()
+def fgui_get_gears(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取直属子对象六类 Gear 的绑定、默认值和页面值；其它 Gear 返回原始 XML，只读不创建 Gear。"""
+    return _client.call("get_gears", {"target": _target(object_id, object_path, object_name)})
+
+
+@mcp.tool()
+def fgui_set_gear(gear_type: str, controller_name: str, default_value: Any = None,
+                  page_values: list[dict[str, Any]] | None = None, visible_page_ids: list[str] | None = None,
+                  object_id: str | None = None, object_path: str | None = None, object_name: str | None = None,
+                  save: bool = False) -> dict[str, Any]:
+    """绑定控制器并完整替换一个 Gear 的配置，其它 Gear 保留；默认不保存，不支持 Agent undo。
+
+    gear_type 为 display/text/icon/xy/size/color。display 使用 visible_page_ids，空数组表示所有页可见。
+    其它类型必须提供 default_value 和 page_values=[{pageId: "0", value: ...}]，未列页面用默认值。
+    text/icon 的 value 是字符串，图标限图片 ui:// 或空串；xy 为整数像素 {x,y}；size 为 {width,height,scaleX?,scaleY?}；
+    color 为 {color:"#RRGGBB",strokeColor?:"#RRGGBB"}。省略缩放为 1，省略描边为黑色。文本不支持竖线。
+    仅当前文档直属对象。save=true 保存整个组件并回读 XML；需切页验证布局与可见性，缺图要求人工验证、不回滚。
+    """
+    params: dict[str, Any] = {"target": _target(object_id, object_path, object_name), "gearType": gear_type, "controllerName": controller_name, "save": save}
+    for key, value in (("defaultValue", default_value), ("pageValues", page_values), ("visiblePageIds", visible_page_ids)):
+        if value is not None:
+            params[key] = value
+    return _client.call("set_gear", params)
 
 
 @mcp.tool()

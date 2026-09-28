@@ -202,6 +202,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("active", help="读取当前文档")
     subparsers.add_parser("controllers", help="读取当前文档控制器、页面和当前页")
+    gear_get = subparsers.add_parser("get-gears", help="读取直属子对象的 Gear 配置")
+    _add_target_arguments(gear_get)
+    gear_set = subparsers.add_parser("set-gear", help="完整替换一个 Gear，保留其它 Gear，默认不保存")
+    _add_target_arguments(gear_set)
+    gear_set.add_argument("gear_type", choices=["display", "text", "icon", "xy", "size", "color"])
+    gear_set.add_argument("controller_name")
+    gear_set.add_argument("config", help="JSON：defaultValue/pageValues 或 display 的 visiblePageIds（空数组代表全显示）")
+    gear_set.add_argument("--save", action="store_true")
     controller_create = subparsers.add_parser("create-controller", help="创建控制器，默认不保存")
     controller_create.add_argument("name")
     controller_create.add_argument("--pages", nargs="*", default=[], help="初始页面名称，省略创建空控制器")
@@ -524,6 +532,15 @@ def main() -> int:
             action = "get_active_document"
         elif args.command == "controllers":
             action = "get_controllers"
+        elif args.command == "get-gears":
+            action = "get_gears"
+            params = {"target": target_from_args(args)}
+        elif args.command == "set-gear":
+            action = "set_gear"
+            config = load_json_value(args.config)
+            if not isinstance(config, dict) or set(config) - {"defaultValue", "pageValues", "visiblePageIds"}:
+                raise ValueError("config 仅支持 defaultValue/pageValues/visiblePageIds")
+            params = {**config, "target": target_from_args(args), "gearType": args.gear_type, "controllerName": args.controller_name, "save": args.save}
         elif args.command == "create-controller":
             action = "create_controller"
             params = {"name": args.name, "pages": args.pages, "save": args.save}

@@ -66,6 +66,7 @@ ANIMATION_CAPABILITIES = frozenset(
 
 SPINE_CAPABILITIES = frozenset({"get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor"})
 CONTROLLER_CAPABILITIES = frozenset({"get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"})
+GEAR_CAPABILITIES = frozenset({"get_gears", "set_gear"})
 
 
 class BridgeError(RuntimeError):
@@ -210,6 +211,8 @@ class BridgeClient:
     ) -> dict[str, Any]:
         context = self.project_context()
         status = self.ensure_ready()
+        if action in GEAR_CAPABILITIES and action not in status.get("capabilities", []):
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少能力：{action}，请同步并重新加载 0.8.7 或更高版本插件。")
         if action in CONTROLLER_CAPABILITIES and action not in status.get("capabilities", []):
             raise BridgeError(f"FairyGUI Agent Bridge 缺少能力：{action}，请同步并重新加载 0.8.6 或更高版本插件。")
         if action in SPINE_CAPABILITIES and action not in status.get("capabilities", []):

@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.8.6`
+- Bridge 版本：`0.8.7`
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码真源：独立公开仓库；业务工程只安装插件与 Skill 快照
 - 队列协议：`1.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：51，其中新增资源引用、文本样式和文档验证工具；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
+- MCP 工具数：53，其中新增资源引用、文本样式和文档验证工具；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 运行时目录：`.agent/requests`、`.agent/processing`、`.agent/responses`、`.agent/status.json`、`.agent/bridge.log`
 - `.agent/` 是运行时数据，不纳入 Git
@@ -154,10 +154,42 @@
 | `fgui_rename_controller_page` | `controller_name, name, page_id?/page_name?/page_index?, save=false`；只改名称，保留页面 ID |
 | `fgui_set_controller_page` | `controller_name, page_id?/page_name?/page_index?, save=false`；通过原生 setter 应用 Gear/联动 |
 
-页面定位三选一，优先使用稳定的 `page_id`；索引从 0 开始，重复名称拒绝按名称定位。新名称不允许空白、逗号或控制字符，同一控制器中新建页面名称不能重复。控制器名称必须唯一。嵌套组件需先打开所属文档，本批不开放删除控制器/页面、重排、Gear 编辑或联动配置编辑。
+页面定位三选一，优先使用稳定的 `page_id`；索引从 0 开始，重复名称拒绝按名称定位。新名称不允许空白、逗号或控制字符，同一控制器中新建页面名称不能重复。控制器名称必须唯一。嵌套组件需先打开所属文档，不开放删除控制器/页面、重排或联动配置编辑；Gear 编辑见下节。
 
 默认只修改 Editor 内存；`save=true` 保存整个组件并回读实际 XML 中的控制器页面及 selected 字段。切换当前页不会修改运行时 `homePage`；Editor 重开文档可能按首页规则重选页面，不能将当前页保存当作运行时首页设置。实际改动清空旧 Agent undo/redo，不支持完整 Controller/Gear 联动撤销；未保存内容可通过 discard 放弃整个文档。无变化操作不清历史，但显式保存后清历史。写入或保存失败报告实际状态，不假装联动已回滚。
 
 CLI：`controllers`、`create-controller State --pages Idle Active --save`、`add-controller-page State Disabled`、`rename-controller-page State Enabled --page-id 1`、`set-controller-page State --page-index 1 --save`。全局 `--project` 放在子命令前。没有新增删除命令。
 
 验证结果及文件索引：`tests/reports/controller-basic-editing.md`。
+
+## Gear 编辑（0.8.7）
+
+新增 `fgui_get_gears`、`fgui_set_gear`，对应 CLI `get-gears` / `set-gear`。只操作当前文档直属子对象；先读取已有配置，再按稳定页面 ID 编辑。
+
+| gear_type | 配置 |
+| --- | --- |
+| `display` | `visible_page_ids=["1"]`：仅列出的页面可见；**空数组表示所有页面可见**，这是原生 GearDisplay 语义，不表示全部隐藏 |
+| `text` | 默认值和页面值为字符串，支持空串、换行和 XML 特殊字符；原生 `values` 用竖线分隔，暂不接受包含竖线字符（U+007C）的文本（反斜线也不能转义） |
+| `icon` | 字符串：工程内图片 `ui://` URL，空串清除；用于 Loader、Button 等具有图标语义的对象 |
+| `xy` | `{x, y}`，整数像素；暂不编辑已有百分比位置 Gear |
+| `size` | `{width, height, scaleX?, scaleY?}`，宽高非负整数，省略缩放为 1 |
+| `color` | `{color: "#RRGGBB", strokeColor?: "#RRGGBB"}`，省略描边为黑色；不编辑 Alpha |
+
+除 display 外，`default_value` 与 `page_values` 必须显式提供；`page_values` 格式为 `[{"pageId":"0","value":...}]`，允许空数组，未列出的页使用默认值。坐标/尺寸/缩放绝对值不超过 1000000。重复或不属于目标控制器的页面 ID 会在写入前拒绝；新 Gear 绑定及改绑控制器都通过同一个 set 工具完成。
+
+**set 是目标 Gear 的完整替换，不是页面值补丁。** 会保留其它 Gear，以及目标 Gear 的缓动等附加设置，并在 Editor 回读时验证；不新增缓动配置编辑、解绑或删除 Gear 接口，也不删除控制器页面。读取结果包含六类配置及对象 SupportGear 标记，其它 Gear 以原始 XML 返回；未序列化默认值返回 null，不猜测其值。
+
+默认不保存，`save=true` 保存整个组件并回读该对象全部 Gear XML。实际修改清空旧 Agent 历史并保持未保存标记，没有完整 Gear/联动撤销；保存或写入失败报告实际状态，不假装回滚。无变化且不保存时保留历史。布局关系、文本 autoSize、对象基础 visible、GearDisplay2、缓动或显示锁仍可能影响最终效果，需切页观察；对象树 visible 是基础属性，不能据此单独断言 GearDisplay 的最终可见性。
+
+Python/MCP 调用示例：
+
+```python
+fgui_get_gears(object_name="title")
+fgui_set_gear("text", "State", object_name="title", default_value="其他",
+              page_values=[{"pageId": "0", "value": "待领取"}, {"pageId": "1", "value": "已领取"}], save=True)
+fgui_set_gear("display", "State", object_name="badge", visible_page_ids=["1"], save=True)
+```
+
+CLI 示例：`set-gear text State '{"defaultValue":"其他","pageValues":[{"pageId":"1","value":"已领取"}]}' --name title --save`。CLI JSON 使用 camelCase；全局 `--project` 放在子命令前。
+
+截图失败仍要求用户人工验证，保留修改。六类 Gear 的实机样本、测试与文件索引见 `tests/reports/gear-editing.md`。

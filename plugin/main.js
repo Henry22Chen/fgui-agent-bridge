@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.8.6";
+const BRIDGE_VERSION = "0.8.7";
 const PROTOCOL_VERSION = "1.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -35,7 +35,7 @@ const animationPreviewContexts = {};
 // 资源加载期间保护异步请求；期限由 Editor update 驱动，客户端超时不作为取消信号。
 const spineWaits = [];
 let loader3dBusy = false;
-// Loader3D 和 Controller 不进入 Agent 事务；原生撤销不能把这些未保存变更标成干净。
+// Loader3D、Controller 和 Gear 不进入 Agent 事务；原生撤销不能把这些未保存变更标成干净。
 const untrackedDocumentVersions = new WeakMap();
 function invalidateUntrackedHistory(doc) {
     clearAgentHistory();
@@ -402,6 +402,229 @@ async function setLoader3d(params) {
     finally {
         loader3dBusy = false;
     }
+}
+const GEAR_TYPES = { display: { index: 0, tag: "gearDisplay" }, xy: { index: 1, tag: "gearXY" },
+    size: { index: 2, tag: "gearSize" }, color: { index: 4, tag: "gearColor" }, text: { index: 6, tag: "gearText" }, icon: { index: 7, tag: "gearIcon" } };
+function gearTarget(doc, target) {
+    const obj = resolveObject(doc, target);
+    // Gear 引用的是直接父组件控制器；禁止把嵌套资源当作当前文档的子对象改写。
+    let direct = false;
+    for (let i = 0; i < doc.content.numChildren; i++)
+        if (doc.content.GetChildAt(i) === obj)
+            direct = true;
+    if (!direct)
+        verificationError("nested_target", "Gear 只支持当前文档直属子对象，请打开其所属组件", { target });
+    return obj;
+}
+/** 以排序后的 XML 属性比对语义，忽略宿主序列化时的属性/节点顺序。 */
+function gearXmlData(node) {
+    const attrs = {}, entries = [], iterator = node.attributes.GetEnumerator();
+    try {
+        while (iterator.MoveNext())
+            entries.push([String(iterator.Current.Key), String(iterator.Current.Value)]);
+    }
+    finally {
+        iterator.Dispose();
+    }
+    entries.sort((a, b) => a[0].localeCompare(b[0])).forEach(pair => attrs[pair[0]] = pair[1]);
+    const children = [];
+    for (let i = 0; i < node.elements.Count; i++)
+        children.push(gearXmlData(node.elements.get_Item(i)));
+    return { name: String(node.name), attrs, text: node.text || "", children };
+}
+function gearNodes(xml) {
+    const nodes = [];
+    for (let i = 0; i < xml.elements.Count; i++) {
+        const node = xml.elements.get_Item(i);
+        if (String(node.name).indexOf("gear") === 0)
+            nodes.push(node);
+    }
+    return nodes;
+}
+function parseGearValue(type, value) {
+    if (type === "text" || type === "icon")
+        return value;
+    const parts = value.split(",");
+    if (type === "color")
+        return { color: parts[0].toUpperCase(), strokeColor: (parts[1] || "#000000").toUpperCase() };
+    const numbers = parts.map(Number);
+    if (type === "xy")
+        return { x: numbers[0], y: numbers[1] };
+    return { width: numbers[0], height: numbers[1], scaleX: numbers.length > 2 ? numbers[2] : 1, scaleY: numbers.length > 3 ? numbers[3] : 1 };
+}
+function gearDescription(type, node) {
+    if (!node)
+        return { type, bound: false };
+    const pages = String(node.GetAttribute("pages") || "").split(",").filter(Boolean);
+    const result = { type, bound: true, controllerName: String(node.GetAttribute("controller") || ""), xml: String(node.ToXMLString(false)) };
+    if (type === "display")
+        return { ...result, visiblePageIds: pages, allPagesVisible: pages.length === 0 };
+    const raw = node.GetAttribute("default"), values = String(node.GetAttribute("values") || "").split("|");
+    return { ...result, defaultValue: raw === null || raw === undefined ? null : parseGearValue(type, String(raw)),
+        pageValues: pages.map((pageId, i) => ({ pageId, value: values[i] === undefined ? null : parseGearValue(type, values[i]) })) };
+}
+function getGears(params) {
+    const doc = getActiveDocument(), obj = gearTarget(doc, params.target), xml = obj.WriteGears();
+    return { target: targetSummary(obj, params.target), documentUrl: doc.content.resourceURL,
+        gears: Object.keys(GEAR_TYPES).map(type => ({ ...gearDescription(type, xml.GetNode(GEAR_TYPES[type].tag)), supported: obj.SupportGear(GEAR_TYPES[type].index) })),
+        otherGears: gearNodes(xml).filter(n => !Object.keys(GEAR_TYPES).some(type => GEAR_TYPES[type].tag === String(n.name))).map(n => String(n.ToXMLString(false))) };
+}
+function encodeGearValue(type, value) {
+    const fail = (message) => verificationError("invalid_argument", message, { gearType: type });
+    if (type === "text" || type === "icon") {
+        if (typeof value !== "string" || /[|\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value))
+            fail("文字/图标值必须是字符串，不能含竖线或非法 XML 控制字符");
+        // Editor 的 values 用 | 分隔，反斜线不能转义；在写入前拒绝，避免悄悄截断内容。
+        if (type === "icon" && value) {
+            const item = App.project.GetItemByURL(value);
+            if (!item || item.type !== FairyEditor.FPackageItemType.IMAGE)
+                fail("图标必须为空字符串或工程内图片 ui:// URL");
+            return String(item.GetURL());
+        }
+        return value;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        fail("Gear 值必须是字段对象");
+    const keys = type === "xy" ? ["x", "y"] : type === "size" ? ["width", "height", "scaleX", "scaleY"] : ["color", "strokeColor"];
+    if (Object.keys(value).some(key => keys.indexOf(key) < 0))
+        fail("Gear 值包含未知字段");
+    if (type === "color") {
+        const color = (input) => {
+            if (typeof input !== "string" || !/^#[0-9a-fA-F]{6}$/.test(input))
+                fail("Gear 颜色必须是 #RRGGBB");
+            return input.toLowerCase();
+        };
+        return `${color(value.color)},${color(value.strokeColor === undefined ? "#000000" : value.strokeColor)}`;
+    }
+    const numbers = keys.map(key => value[key] === undefined && (key === "scaleX" || key === "scaleY") ? 1 : value[key]);
+    if (numbers.some(n => typeof n !== "number" || !Number.isFinite(n) || Math.abs(n) > 1000000))
+        fail("坐标/尺寸/缩放必须是有限数字，绝对值不超过 1000000");
+    // Editor 6.1.4 FGearXY.ReadValue 使用 Int32.Parse；小数必须在 ReadGears 前拒绝。
+    if (type === "xy" && numbers.some(n => !Number.isInteger(n)))
+        fail("GearXY 的 x/y 必须是整数像素");
+    if (type === "size" && (!Number.isInteger(numbers[0]) || !Number.isInteger(numbers[1]) || numbers[0] < 0 || numbers[1] < 0))
+        fail("宽高必须是非负整数像素");
+    return numbers.join(",");
+}
+/** 替换一个 Gear 的完整页面配置；其它 Gear 和目标 Gear 的缓动等附加设置保留。 */
+function setGear(params) {
+    const doc = getActiveDocument(), obj = gearTarget(doc, params.target), type = params.gearType;
+    const spec = typeof type === "string" && Object.prototype.hasOwnProperty.call(GEAR_TYPES, type) ? GEAR_TYPES[type] : null;
+    if (!spec)
+        verificationError("unsupported_gear", "仅支持 display/text/icon/xy/size/color", {});
+    if (!obj.SupportGear(spec.index))
+        verificationError("unsupported_gear", "该对象不支持此 Gear", { type });
+    if (params.save !== undefined && typeof params.save !== "boolean")
+        verificationError("invalid_argument", "save 必须是布尔值", {});
+    const controller = resolveController(doc, params.controllerName), validPages = controllerSnapshot(controller).pages.map(p => p.id);
+    const validateIds = (ids) => {
+        if (!Array.isArray(ids) || ids.some(id => typeof id !== "string" || validPages.indexOf(id) < 0) || new Set(ids).size !== ids.length)
+            verificationError("invalid_argument", "页面 ID 必须属于指定控制器且不能重复", {});
+    };
+    let ids, values = [], defaultValue;
+    if (type === "display") {
+        if (params.defaultValue !== undefined || params.pageValues !== undefined)
+            verificationError("invalid_argument", "display 仅使用 visiblePageIds；空数组表示所有页可见", {});
+        validateIds(params.visiblePageIds);
+        ids = params.visiblePageIds.slice();
+    }
+    else {
+        if (params.visiblePageIds !== undefined || !Array.isArray(params.pageValues))
+            verificationError("invalid_argument", "非 display Gear 必须提供 defaultValue 和 pageValues 数组", {});
+        defaultValue = encodeGearValue(type, params.defaultValue);
+        ids = params.pageValues.map(entry => entry && entry.pageId);
+        validateIds(ids);
+        values = params.pageValues.map(entry => {
+            if (!entry || Object.keys(entry).some(key => key !== "pageId" && key !== "value"))
+                verificationError("invalid_argument", "页面条目仅允许 pageId/value", {});
+            return encodeGearValue(type, entry.value);
+        });
+    }
+    // 按控制器页面顺序序列化，调用方的数组顺序不会改变页面身份。
+    const order = ids.map((id, i) => ({ id, value: values[i] })).sort((a, b) => validPages.indexOf(a.id) - validPages.indexOf(b.id));
+    ids = order.map(v => v.id);
+    values = order.map(v => v.value);
+    const beforeXml = obj.WriteGears(), old = beforeXml.GetNode(spec.tag);
+    // 百分比位置还需维护 positionsInPercent；首批明确拒绝，避免普通 xy 覆盖高级配置。
+    if (type === "xy" && old && (old.GetAttribute("positionsInPercent") || old.GetAttribute("percent")))
+        verificationError("unsupported_gear", "百分比位置 Gear 暂不支持编辑", {});
+    const Xml = CS.FairyGUI.Utils.XML;
+    const xml = new Xml(String(beforeXml.ToXMLString(false)));
+    const node = xml.GetNode(spec.tag) || Xml.Create(spec.tag);
+    if (!xml.GetNode(spec.tag))
+        xml.AppendChild(node);
+    node.SetAttribute("controller", String(controller.name));
+    node.SetAttribute("pages", ids.join(","));
+    if (type !== "display") {
+        node.SetAttribute("values", values.join("|"));
+        node.SetAttribute("default", defaultValue);
+    }
+    const expected = gearDescription(type, node), before = gearDescription(type, old);
+    const semantic = (v) => { const copy = { ...v }; delete copy.xml; return copy; };
+    const changed = !valuesEqual(semantic(before), semantic(expected));
+    let after = before;
+    if (changed) {
+        invalidateUntrackedHistory(doc);
+        try {
+            // ReadGears 会重建所有 Gear，因此必须传完整快照，随后校验其它 Gear 未受影响。
+            obj.ReadGears(xml);
+            // 重建后重新应用该对象的所有控制器状态，恢复绑定到其它控制器的显隐等状态。
+            // 不调用组件 ApplyController，避免额外执行控制器联动或切换页面。
+            for (const current of controllerList(doc))
+                obj.HandleControllerChanged(current);
+            const actualXml = obj.WriteGears();
+            after = gearDescription(type, actualXml.GetNode(spec.tag));
+            if (!valuesEqual(semantic(after), semantic(expected)))
+                throw new Error("Gear Editor 回读与期望不符");
+            const untouched = (root) => gearNodes(root).filter(n => String(n.name) !== spec.tag).map(gearXmlData).sort((a, b) => a.name.localeCompare(b.name));
+            if (!valuesEqual(untouched(beforeXml), untouched(actualXml)))
+                throw new Error("其它 Gear 的配置发生变化");
+            const extras = (n) => { const data = gearXmlData(n); for (const k of ["controller", "pages", "values", "default"])
+                delete data.attrs[k]; return data; };
+            if (!valuesEqual(extras(node), extras(actualXml.GetNode(spec.tag))))
+                throw new Error("目标 Gear 的附加设置发生变化");
+            doc.SetModified(true);
+            doc.RefreshInspectors();
+        }
+        catch (error) {
+            invalidateUntrackedHistory(doc);
+            // 原生解析可能已重建部分 Gear；失败时不能把旧快照伪装成修改后的状态。
+            after = null;
+            try {
+                after = gearDescription(type, obj.WriteGears().GetNode(spec.tag));
+            }
+            catch (_) { /* 无法回读时明确返回 null。 */ }
+            verificationError("editor_rejected", String(error), { before, after, mutationMayHaveOccurred: true, rollbackAttempted: false });
+        }
+    }
+    let saved = false, persisted = false;
+    if (params.save === true) {
+        try {
+            const expectedAll = gearNodes(obj.WriteGears()).map(gearXmlData).sort((a, b) => a.name.localeCompare(b.name));
+            doc.Save();
+            if (doc.isModified)
+                throw new Error("保存后组件仍有未保存修改");
+            saved = true;
+            clearAgentHistory();
+            untrackedDocumentVersions.delete(doc);
+            const item = App.project.GetItemByURL(doc.content.resourceURL), disk = new Xml(String(IOFile.ReadAllText(item.file)));
+            const list = disk.GetNode("displayList"), matches = [];
+            if (list)
+                for (let i = 0; i < list.elements.Count; i++) {
+                    const child = list.elements.get_Item(i);
+                    if (String(child.GetAttribute("id")) === String(obj.id))
+                        matches.push(child);
+                }
+            if (matches.length !== 1 || !valuesEqual(gearNodes(matches[0]).map(gearXmlData).sort((a, b) => a.name.localeCompare(b.name)), expectedAll))
+                throw new Error("组件 XML 的 Gear 配置与 Editor 不一致");
+            persisted = true;
+        }
+        catch (error) {
+            verificationError("persistence_failed", String(error), { before, after, saved, persisted: false, mutationMayHaveOccurred: changed, diskState: "unknown", rollbackAttempted: false });
+        }
+    }
+    return { target: targetSummary(obj, params.target), before, after, changed, saved, persisted, documentModified: Boolean(doc.isModified), agentUndoSupported: false,
+        note: "替换目标 Gear 的完整配置；未列页面使用默认值。display 空列表表示所有页可见。布局、自动尺寸和其它 Gear 仍可能影响最终外观，需切页验证。" };
 }
 /** 当前文档根组件的控制器；嵌套组件应先打开其所属文档，避免改错资源。 */
 function controllerList(doc) {
@@ -785,6 +1008,7 @@ function writeStatus() {
             "redo",
             "verify_document", "replace_object_resource", "get_text_style", "set_text_style",
             "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor",
+            "get_gears", "set_gear",
             "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"
         ]
     });
@@ -3059,6 +3283,7 @@ function handleCommand(request) {
     if (loader3dBusy && ["ping", "get_project", "get_active_document", "list_packages", "list_items"].indexOf(action) < 0)
         verificationError("document_busy", "Loader3D 加载中，请等待当前请求完成", {});
     const actionsBlockedDuringPublish = {
+        set_gear: true,
         create_controller: true, add_controller_page: true, rename_controller_page: true, set_controller_page: true,
         get_loader3d: true, set_loader3d: true, capture_document: true, fix_spine_anchor: true,
         open_document: true,
@@ -3088,6 +3313,8 @@ function handleCommand(request) {
     if (publishInProgress && actionsBlockedDuringPublish[action])
         throw new Error(`FairyGUI 发布进行中，暂不能执行：${action}`);
     switch (action) {
+        case "get_gears": return getGears(params);
+        case "set_gear": return setGear(params);
         case "get_controllers": return { documentUrl: getActiveDocument().content.resourceURL, controllers: controllerList(getActiveDocument()).map(controllerSnapshot) };
         case "create_controller":
         case "add_controller_page":
