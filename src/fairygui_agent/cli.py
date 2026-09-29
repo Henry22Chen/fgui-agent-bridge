@@ -202,6 +202,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("active", help="读取当前文档")
     subparsers.add_parser("controllers", help="读取当前文档控制器、页面和当前页")
+    for command in ("get-controller-actions", "upsert-controller-action", "remove-controller-action"):
+        action_parser = subparsers.add_parser(command, help="读取/编辑控制器联动，默认不保存")
+        action_parser.add_argument("controller_name")
+        if command == "upsert-controller-action":
+            action_parser.add_argument("action_config", help="完整 Action JSON：type=change_page/play_transition")
+            action_parser.add_argument("--action-index", type=int, help="省略为追加；提供时替换该索引")
+        if command == "remove-controller-action":
+            action_parser.add_argument("action_index", type=int)
+        if command != "get-controller-actions":
+            action_parser.add_argument("--save", action="store_true")
     gear_get = subparsers.add_parser("get-gears", help="读取直属子对象的 Gear 配置")
     _add_target_arguments(gear_get)
     gear_set = subparsers.add_parser("set-gear", help="完整替换一个 Gear，保留其它 Gear，默认不保存")
@@ -532,6 +542,15 @@ def main() -> int:
             action = "get_active_document"
         elif args.command == "controllers":
             action = "get_controllers"
+        elif args.command in ("get-controller-actions", "upsert-controller-action", "remove-controller-action"):
+            action = args.command.replace("-", "_")
+            params = {"controllerName": args.controller_name}
+            if args.command != "get-controller-actions":
+                params["save"] = args.save
+                if args.action_index is not None:
+                    params["actionIndex"] = args.action_index
+            if args.command == "upsert-controller-action":
+                params["action"] = load_json_value(args.action_config)
         elif args.command == "get-gears":
             action = "get_gears"
             params = {"target": target_from_args(args)}

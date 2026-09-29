@@ -214,7 +214,7 @@ Loader3D 实际修改会清空旧 Agent undo/redo；校验失败和无变化操�
 
 ## Controller 基础编辑（0.8.6）
 
-先 `fgui_get_controllers` 读取当前文档控制器与稳定页面 ID，再创建控制器、追加页面、按 ID 重命名或切换当前页。只操作当前文档根组件；嵌套组件先打开所属文档。页面定位 ID/名称/索引三选一，重命名不改变页面 ID。不支持删除页面或控制器；Gear 使用下节工具，联动配置暂不编辑。
+先 `fgui_get_controllers` 读取当前文档控制器与稳定页面 ID，再创建控制器、追加页面、按 ID 重命名或切换当前页。只操作当前文档根组件；嵌套组件先打开所属文档。页面定位 ID/名称/索引三选一，重命名不改变页面 ID。不支持删除页面或控制器；Gear 与联动配置使用下节工具。
 
 默认不保存；save=true 保存整个组件并回读 XML。切页通过原生 setter 应用 Gear/联动，不修改 homePage，也不保证重新打开后维持当前页。实际编辑清空旧 Agent 历史，不支持完整撤销；失败保留实际状态，不声称联动已回滚。需要查看切页效果时截图；缺图仍按既有规则提示人工验证、不回滚。
 
@@ -225,3 +225,9 @@ Loader3D 实际修改会清空旧 Agent undo/redo；校验失败和无变化操�
 set 是完整替换，不是局部补丁：保留需要沿用的页面条目。其它 Gear 与目标的缓动附加设置保留并回读验证。文字暂不支持竖线，图标仅图片 ui:// 或空串；百分比位置和 GearDisplay2 等高级编辑暂不开放。根据布局、自动尺寸、基础 visible 与显示锁检查实际效果，不能把读取到配置当作视觉通过。
 
 默认不保存；save=true 保存整个组件并校验对象全部 Gear 的磁盘 XML。修改清空旧 Agent 历史，不支持完整撤销；失败报告实际状态，不自动回滚。切页后截图观察显隐、文字、图标、位置、尺寸和颜色；缺图保留修改并要求用户自行验证。
+
+## 控制器联动（0.8.8）
+
+先用 `fgui_get_controller_actions` 读取执行顺序、配置和当前/直属子组件的控制器页面，再用 `fgui_upsert_controller_action` 追加或按 action_index 完整替换单条；`fgui_remove_controller_action` 只删除联动。索引不是稳定 ID，增删后重新读取。支持 change_page/play_transition，fromPageIds/toPageIds 空数组为任意页。目标页必须是稳定 ID，自引用/循环拒绝；目标 Transition 必须存在，delay 单位是秒，repeat=-1 为循环。
+
+配置编辑不触发联动或停止已运行的动画。save=true 保存整个父组件并校验 Action XML 内容和顺序，不写子组件资源；实际修改清旧 Agent 历史，无完整撤销。页面/控制器删除仍暂缓。Editor 6.1.4 普通编辑模式不会自动播放联动 Transition，必须在原生运行预览验证触发/退出；不要把 XML 持久化或单独手动播放当成联动播放成功。截图失败按 manual_required 要求人工验证并保留修改。完整字段和示例见 references/current-capabilities.md。

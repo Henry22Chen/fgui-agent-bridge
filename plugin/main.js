@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.8.7";
+const BRIDGE_VERSION = "0.8.8";
 const PROTOCOL_VERSION = "1.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -698,6 +698,17 @@ function finishControllerWrite(doc, c, before, params, changed) {
                 if (String(matches[0].GetAttribute(key) || "") !== String(expected.GetAttribute(key) || ""))
                     throw new Error(`组件 XML 的 ${key} 与 Editor 不一致`);
             }
+            const actionData = (node) => {
+                const data = [];
+                for (let i = 0; i < node.elements.Count; i++) {
+                    const child = node.elements.get_Item(i);
+                    if (String(child.name) === "action")
+                        data.push(gearXmlData(child));
+                }
+                return data;
+            };
+            if (!valuesEqual(actionData(matches[0]), actionData(expected)))
+                throw new Error("组件 XML 的控制器联动与 Editor 不一致");
             persisted = true;
         }
         catch (error) {
@@ -791,6 +802,160 @@ function editController(action, params) {
         }
     }
     return finishControllerWrite(doc, c, before, params, changed);
+}
+/** Action 没有稳定 ID；索引按原生执行顺序返回，增删后应重新读取。 */
+function controllerActionList(c) {
+    const result = [], list = c.GetActions();
+    for (let i = 0; i < list.Count; i++)
+        result.push(list.get_Item(i));
+    return result;
+}
+function controllerActionSnapshot(action, index) {
+    const xml = action.Write(), attr = (key) => String(xml.GetAttribute(key) || "");
+    const result = { index, type: String(action.type), fromPageIds: attr("fromPage").split(",").filter(Boolean),
+        toPageIds: attr("toPage").split(",").filter(Boolean), xml: String(xml.ToXMLString(false)) };
+    if (result.type === "change_page")
+        Object.assign(result, { objectId: attr("objectId"), controllerName: attr("controller"), targetPageId: attr("targetPage") });
+    if (result.type === "play_transition")
+        Object.assign(result, { transitionName: attr("transition"), repeat: Number(action.repeat), delay: Number(action.delay), stopOnExit: Boolean(action.stopOnExit) });
+    return result;
+}
+/** 只列当前组件与直属子组件，调用者可据此获得联动目标的稳定页面 ID。 */
+function getControllerActions(params) {
+    const doc = getActiveDocument(), c = resolveController(doc, params.controllerName), targets = [];
+    const add = (obj, objectId) => targets.push({ objectId, name: String(obj.name || ""), controllers: controllerList({ content: obj }).map(controllerSnapshot) });
+    add(doc.content, "");
+    for (let i = 0; i < doc.content.numChildren; i++) {
+        const child = doc.content.GetChildAt(i);
+        // Button/List 等扩展组件也可有控制器，不能只按 objectType="component" 过滤。
+        if (typeof child.numChildren === "number" && child.controllers)
+            add(child, String(child.id));
+    }
+    return { documentUrl: doc.content.resourceURL, controller: controllerSnapshot(c), actions: controllerActionList(c).map(controllerActionSnapshot), targets };
+}
+function buildControllerAction(doc, c, value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        verificationError("invalid_argument", "action 必须是配置对象", {});
+    const common = ["type", "fromPageIds", "toPageIds"], change = ["objectId", "controllerName", "targetPageId"], play = ["transitionName", "repeat", "delay", "stopOnExit"];
+    if (!["change_page", "play_transition"].includes(value.type))
+        verificationError("invalid_argument", "仅支持 change_page/play_transition", {});
+    if (Object.keys(value).some(key => !common.concat(value.type === "change_page" ? change : play).includes(key)))
+        verificationError("invalid_argument", "action 含未知字段或混用了两种类型的字段", {});
+    const xml = CS.FairyGUI.Utils.XML.Create("action");
+    xml.SetAttribute("type", value.type);
+    for (const key of ["fromPageIds", "toPageIds"]) {
+        const ids = value[key] === undefined ? [] : value[key];
+        if (!Array.isArray(ids) || ids.some(id => typeof id !== "string") || new Set(ids).size !== ids.length)
+            verificationError("invalid_argument", "页面条件必须是不重复的页面 ID 数组；空数组匹配任意页", { key });
+        ids.forEach(id => resolveControllerPage(c, { pageId: id }));
+        xml.SetAttribute(key === "fromPageIds" ? "fromPage" : "toPage", ids.join(","));
+    }
+    if (value.type === "change_page") {
+        const objectId = value.objectId === undefined ? "" : value.objectId;
+        if (typeof objectId !== "string")
+            verificationError("invalid_argument", "objectId 必须是直属子组件 ID 或空字符串", {});
+        let component = doc.content;
+        if (objectId) {
+            component = null;
+            for (let i = 0; i < doc.content.numChildren; i++) {
+                const child = doc.content.GetChildAt(i);
+                if (String(child.id) === objectId && typeof child.numChildren === "number" && child.controllers)
+                    component = child;
+            }
+            if (!component)
+                verificationError("invalid_target", "联动目标必须是当前组件或直属子组件", { objectId });
+        }
+        const target = resolveController({ content: component }, value.controllerName);
+        resolveControllerPage(target, { pageId: value.targetPageId });
+        // 原生 changing 标记可抑制部分递归，但循环仍会导致页结果依赖执行顺序；新增配置拒绝构成回环。
+        const visited = [];
+        const reachesSource = (current) => {
+            if (current === c)
+                return true;
+            if (visited.indexOf(current) >= 0)
+                return false;
+            visited.push(current);
+            return controllerActionList(current).some(a => {
+                if (String(a.type) !== "change_page")
+                    return false;
+                const next = a.GetControllerObj(current.parent);
+                return next ? reachesSource(next) : false;
+            });
+        };
+        if (reachesSource(target))
+            verificationError("controller_cycle", "该联动会形成控制器自引用或循环", {});
+        xml.SetAttribute("objectId", objectId);
+        xml.SetAttribute("controller", value.controllerName);
+        xml.SetAttribute("targetPage", value.targetPageId);
+    }
+    else {
+        resolveTransition(doc, value.transitionName);
+        const repeat = value.repeat === undefined ? 1 : value.repeat, delay = value.delay === undefined ? 0 : value.delay;
+        if (!Number.isInteger(repeat) || repeat < -1 || repeat === 0 || repeat > 2147483647 || typeof delay !== "number" || !Number.isFinite(delay) || delay < 0 || delay > 86400
+            || (value.stopOnExit !== undefined && typeof value.stopOnExit !== "boolean"))
+            verificationError("invalid_argument", "repeat 为正整数或 -1（循环），delay 为 0..86400 秒，stopOnExit 为布尔值", {});
+        xml.SetAttribute("transition", value.transitionName);
+        xml.SetAttribute("repeat", String(repeat));
+        xml.SetAttribute("delay", String(delay));
+        xml.SetAttribute("stopOnExit", value.stopOnExit === true ? "true" : "false");
+    }
+    // 在脱离文档的原生对象上解析，避免格式错误导致已有 Action 被部分改写。
+    const candidate = new FairyEditor.FControllerAction();
+    candidate.Read(xml);
+    return candidate;
+}
+/** 完整替换指定 Action；保留其他 Action（含未知类型）、Controller 页面和 Gear。 */
+function editControllerAction(operation, params) {
+    const doc = getActiveDocument(), c = resolveController(doc, params.controllerName), actions = controllerActionList(c);
+    if (params.save !== undefined && typeof params.save !== "boolean")
+        verificationError("invalid_argument", "save 必须是布尔值", {});
+    const removing = operation === "remove_controller_action", index = params.actionIndex;
+    const updating = index !== undefined && index !== null;
+    if ((removing && !updating) || (updating && (!Number.isInteger(index) || index < 0 || index >= actions.length)))
+        verificationError("invalid_argument", "actionIndex 必须指向已有联动；追加时省略", {});
+    const candidate = removing ? null : buildControllerAction(doc, c, params.action);
+    const before = actions.map(controllerActionSnapshot), expected = actions.map(a => gearXmlData(a.Write()));
+    if (removing)
+        expected.splice(index, 1);
+    else if (updating)
+        expected[index] = gearXmlData(candidate.Write());
+    else
+        expected.push(gearXmlData(candidate.Write()));
+    const changed = !valuesEqual(actions.map(a => gearXmlData(a.Write())), expected);
+    const controllerBefore = controllerSnapshot(c);
+    if (changed) {
+        invalidateUntrackedHistory(doc);
+        try {
+            if (removing)
+                c.RemoveAction(actions[index]);
+            else {
+                const target = c.AddAction(String(candidate.type));
+                // 不调用 RunActions/ApplyController：配置编辑本身不能播放动画或切换其它控制器。
+                // 原生 Read 会保留旧对象中被 XML 省略的字段（例如空 fromPage），必须用新对象替换。
+                target.Read(candidate.Write());
+                if (updating) {
+                    c.SwapAction(index, actions.length);
+                    c.RemoveAction(actions[index]);
+                }
+            }
+            if (!valuesEqual(controllerActionList(c).map(a => gearXmlData(a.Write())), expected) || !valuesEqual(controllerSnapshot(c), controllerBefore))
+                throw new Error("Editor 联动配置回读不符或意外改变控制器页面");
+            doc.SetModified(true);
+            doc.RefreshInspectors();
+        }
+        catch (error) {
+            let after = null;
+            try {
+                after = controllerActionList(c).map(controllerActionSnapshot);
+            }
+            catch (_) { /* 读取失败时不能伪造旧状态。 */ }
+            verificationError("editor_rejected", String(error), { before, after, mutationMayHaveOccurred: true, rollbackAttempted: false });
+        }
+    }
+    const result = finishControllerWrite(doc, c, controllerBefore, params, changed);
+    return { ...result, controllerName: String(c.name), before, after: controllerActionList(c).map(controllerActionSnapshot),
+        actionIndex: removing ? null : updating ? index : actions.length,
+        note: "联动按数组顺序执行；配置编辑不触发联动，切页才执行。索引可能随增删变化，请重新读取。save 保存整个组件，不修改子组件资源。" };
 }
 function captureDocument(params, requestId) {
     let texture = null;
@@ -1008,7 +1173,7 @@ function writeStatus() {
             "redo",
             "verify_document", "replace_object_resource", "get_text_style", "set_text_style",
             "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor",
-            "get_gears", "set_gear",
+            "get_gears", "set_gear", "get_controller_actions", "upsert_controller_action", "remove_controller_action",
             "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"
         ]
     });
@@ -3284,6 +3449,7 @@ function handleCommand(request) {
         verificationError("document_busy", "Loader3D 加载中，请等待当前请求完成", {});
     const actionsBlockedDuringPublish = {
         set_gear: true,
+        upsert_controller_action: true, remove_controller_action: true,
         create_controller: true, add_controller_page: true, rename_controller_page: true, set_controller_page: true,
         get_loader3d: true, set_loader3d: true, capture_document: true, fix_spine_anchor: true,
         open_document: true,
@@ -3314,6 +3480,9 @@ function handleCommand(request) {
         throw new Error(`FairyGUI 发布进行中，暂不能执行：${action}`);
     switch (action) {
         case "get_gears": return getGears(params);
+        case "get_controller_actions": return getControllerActions(params);
+        case "upsert_controller_action":
+        case "remove_controller_action": return editControllerAction(action, params);
         case "set_gear": return setGear(params);
         case "get_controllers": return { documentUrl: getActiveDocument().content.resourceURL, controllers: controllerList(getActiveDocument()).map(controllerSnapshot) };
         case "create_controller":

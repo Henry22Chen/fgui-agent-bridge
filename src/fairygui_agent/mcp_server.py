@@ -522,6 +522,35 @@ def fgui_set_gear(gear_type: str, controller_name: str, default_value: Any = Non
 
 
 @mcp.tool()
+def fgui_get_controller_actions(controller_name: str) -> dict[str, Any]:
+    """读取根控制器联动执行顺序，以及当前/直属子组件的控制器页面 ID 与当前状态；索引从 0 开始。"""
+    return _client.call("get_controller_actions", {"controllerName": controller_name})
+
+
+@mcp.tool()
+def fgui_upsert_controller_action(controller_name: str, action: dict[str, Any], action_index: int | None = None,
+                                  save: bool = False) -> dict[str, Any]:
+    """追加联动，或按 action_index 完整替换一个联动；其它联动保留。配置编辑不触发执行。
+
+    action 通用字段：type、fromPageIds、toPageIds；页面条件省略/空数组匹配任意页，使用源控制器稳定 ID。
+    type=change_page：objectId（空串/省略表示当前组件，否则直属子组件 ID）、controllerName、targetPageId。
+    type=play_transition：transitionName、repeat（默认 1，-1 循环）、delay（默认 0 秒）、stopOnExit（默认 false）。
+    不支持跟随索引/名称等特殊目标页面；拒绝自引用/循环。增删后重新读取索引。
+    默认不保存、不支持 Agent undo；save=true 保存整个父组件并校验联动 XML，不写子组件资源。
+    """
+    params: dict[str, Any] = {"controllerName": controller_name, "action": action, "save": save}
+    if action_index is not None:
+        params["actionIndex"] = action_index
+    return _client.call("upsert_controller_action", params)
+
+
+@mcp.tool()
+def fgui_remove_controller_action(controller_name: str, action_index: int, save: bool = False) -> dict[str, Any]:
+    """删除指定索引联动，其余保持顺序；不删除 Controller 页面。默认不保存、不支持 Agent undo。"""
+    return _client.call("remove_controller_action", {"controllerName": controller_name, "actionIndex": action_index, "save": save})
+
+
+@mcp.tool()
 def fgui_get_controllers() -> dict[str, Any]:
     """读取当前文档根组件的控制器、页面 ID/名称/索引和当前页；嵌套组件需先打开所属文档。"""
     return _client.call("get_controllers")

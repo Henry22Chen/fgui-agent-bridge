@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.8.7`
+- Bridge 版本：`0.8.8`
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码真源：独立公开仓库；业务工程只安装插件与 Skill 快照
 - 队列协议：`1.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：53，其中新增资源引用、文本样式和文档验证工具；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
+- MCP 工具数：56，其中新增资源引用、文本样式和文档验证工具；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 运行时目录：`.agent/requests`、`.agent/processing`、`.agent/responses`、`.agent/status.json`、`.agent/bridge.log`
 - `.agent/` 是运行时数据，不纳入 Git
@@ -154,7 +154,7 @@
 | `fgui_rename_controller_page` | `controller_name, name, page_id?/page_name?/page_index?, save=false`；只改名称，保留页面 ID |
 | `fgui_set_controller_page` | `controller_name, page_id?/page_name?/page_index?, save=false`；通过原生 setter 应用 Gear/联动 |
 
-页面定位三选一，优先使用稳定的 `page_id`；索引从 0 开始，重复名称拒绝按名称定位。新名称不允许空白、逗号或控制字符，同一控制器中新建页面名称不能重复。控制器名称必须唯一。嵌套组件需先打开所属文档，不开放删除控制器/页面、重排或联动配置编辑；Gear 编辑见下节。
+页面定位三选一，优先使用稳定的 `page_id`；索引从 0 开始，重复名称拒绝按名称定位。新名称不允许空白、逗号或控制字符，同一控制器中新建页面名称不能重复。控制器名称必须唯一。嵌套组件需先打开所属文档，不开放删除控制器/页面或页面重排；Gear 和联动配置编辑见下节。
 
 默认只修改 Editor 内存；`save=true` 保存整个组件并回读实际 XML 中的控制器页面及 selected 字段。切换当前页不会修改运行时 `homePage`；Editor 重开文档可能按首页规则重选页面，不能将当前页保存当作运行时首页设置。实际改动清空旧 Agent undo/redo，不支持完整 Controller/Gear 联动撤销；未保存内容可通过 discard 放弃整个文档。无变化操作不清历史，但显式保存后清历史。写入或保存失败报告实际状态，不假装联动已回滚。
 
@@ -193,3 +193,37 @@ fgui_set_gear("display", "State", object_name="badge", visible_page_ids=["1"], s
 CLI 示例：`set-gear text State '{"defaultValue":"其他","pageValues":[{"pageId":"1","value":"已领取"}]}' --name title --save`。CLI JSON 使用 camelCase；全局 `--project` 放在子命令前。
 
 截图失败仍要求用户人工验证，保留修改。六类 Gear 的实机样本、测试与文件索引见 `tests/reports/gear-editing.md`。
+
+## 控制器联动（0.8.8）
+
+| MCP 工具 | 作用 |
+| --- | --- |
+| `fgui_get_controller_actions(controller_name)` | 读取联动执行顺序及配置，列出当前/直属子组件可引用的控制器、稳定页面 ID 和当前页 |
+| `fgui_upsert_controller_action(controller_name, action, action_index?, save=false)` | 省略索引追加；提供索引则完整替换该条，保留其它联动 |
+| `fgui_remove_controller_action(controller_name, action_index, save=false)` | 删除指定联动，其它联动保持顺序；不删除页面 |
+
+`action` 使用以下 JSON 字段：
+
+- 公共：`type`、`fromPageIds`、`toPageIds`。两组页面条件都使用源控制器页面 ID，省略或空数组匹配任意页；两组条件同时满足才执行。
+- `type="change_page"`：`objectId`（空串/省略为当前组件，否则为直属子组件 ID）、`controllerName`、`targetPageId`。只支持显式稳定页面 ID，暂不支持跟随索引/名称等特殊值。拒绝自引用和会构成循环的控制器引用；按控制器引用图保守检查，不尝试证明页面条件能否阻断循环。
+- `type="play_transition"`：`transitionName`（当前组件中已有 Transition）、`repeat`（默认 1，正整数或 -1 循环）、`delay`（默认 0，0..86400 秒）、`stopOnExit`（默认 false）。退出条件是后续切页不再匹配该 Action；由原生执行器决定停止行为。
+
+索引从 0 开始，不是稳定 ID；增删后重新读取，不复用旧索引。更新是单条完整替换，省略字段恢复默认；返回的 `index`/`xml` 是读取元数据，不放进 `action`。未知类型可以读取、保留或删除，不能通过 upsert 编辑。Action 执行顺序与列表顺序一致；修改配置本身不执行联动，也不停止已经播放的动画。
+
+默认仅修改当前根组件内存；`save=true` 保存整个父组件并回读 XML，校验联动内容和顺序。子组件只作为引用目标，不写其资源文件。实际修改清空旧 Agent 历史，不支持完整撤销；失败报告实际状态、保留修改，不自动回滚。删除页面和控制器仍不开放。
+
+**Editor 编辑模式与运行预览不同**：切页可应用控制器/Gear，但 Editor 6.1.4 的普通编辑模式不自动播放 Action 中的 Transition；原生运行预览才会播放。`fgui_preview_animation` 可独立检查动画，不能代替联动触发验收。在运行预览中验证主控制器切页、子组件状态、动画进入/退出；获取截图失败时要求人工验证，不回滚。
+
+```python
+fgui_get_controller_actions("Main")
+fgui_upsert_controller_action("Main", {
+    "type": "change_page", "toPageIds": ["1"],
+    "objectId": "childId", "controllerName": "State", "targetPageId": "1"
+})
+fgui_upsert_controller_action("Main", {
+    "type": "play_transition", "toPageIds": ["1"],
+    "transitionName": "Show", "repeat": 1, "delay": 0, "stopOnExit": True
+}, save=True)
+```
+
+CLI 对应 `get-controller-actions Main`、`upsert-controller-action Main '<Action JSON>' [--action-index 0] [--save]`、`remove-controller-action Main 0 [--save]`。
