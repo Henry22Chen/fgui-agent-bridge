@@ -15,7 +15,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - Python/MCP/CLI 真源：`src/fairygui_agent/`
 - 版本必须同步：`plugin/package.json`、`pyproject.toml`、`src/fairygui_agent/__init__.py`、`plugin/main.ts`、`plugin/main.js`
 - 工程文档真源：`README.md`
-- 当前能力参考：[references/current-capabilities.md](references/current-capabilities.md)
+- 按需查阅 [当前能力参考](references/current-capabilities.md)：工具签名、配置格式、CLI 映射及能力限制；具体编辑前读取相关条目。
 - 业务工程同步入口：`scripts/sync_to_project.py`
 
 若实现、README 和 Skill 不一致，先以代码和实际桥接响应核对，再在同一个改动中修正 README 与 Skill；不要凭旧摘要猜测 Action 或参数。
@@ -55,9 +55,12 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - 按钮状态图顺序固定为 `up/down/over/selectedOver/disabled/selectedDisabled`，非空值必须是工程内图片 `ui://` URL。
 - 资源替换：替换显示对象引用的资源使用 `fgui_replace_object_resource`（当前仅支持 Image 与 Loader，不支持 Button 状态资源切换），支持传入 `expected_type` 校验并在 `--save` 时验证 Editor/XML 持久化。
 - 文本样式：文本对象的样式读取与修改优先使用 `fgui_get_text_style` 和 `fgui_set_text_style`（支持 `fontSize`、`color`、`strokeColor`、`shadowColor`、`lineGap`、`letterSpacing`、`align`、`vAlign`、`autoSize` 等白名单属性），并提供回读验证；暂不支持自动 external reload。
+- Spine：先 `fgui_get_loader3d` 再 `fgui_set_loader3d`；仅编辑直属 Loader3D 的已有包内资源。导入后的修复用 `fgui_fix_spine_anchor`；绑定/插入时默认修复，包保存边界见下文。
+- 状态编辑：先读取 `fgui_get_controllers` / `fgui_get_gears` / `fgui_get_controller_actions`，再编辑页面、Gear 或联动。页面优先用稳定 ID；Gear set 完整替换单个 Gear，Action upsert 省略索引为追加、指定索引为完整替换单条，增删后重读索引。作用于当前根控制器或直属对象；联动可引用直属子组件，不写子组件资源。具体格式见能力参考。
 - 属性修改（如 `text`、`icon`、`font` 等白名单属性）进入 Agent 属性事务栈；结构创建、插入和删除没有完整结构快照撤销。
 - 文档与持久化验证：使用 `fgui_verify_document` 重新读取活动文档对象树并可传入 `target + expected` 比对组件 XML 磁盘持久化内容；无 `expected` 时仅作为对象树快照。
 - 保存使用 `fgui_save_document` 或 `fgui_save_all`；放弃全部未保存修改使用 `fgui_discard_document`。
+- 视觉检查用 `fgui_capture_document` 获取图像后实际观察资源、布局、遮挡与可见性，大体正确即可，不要求帧或像素一致。`pending_review` 尚未验收；缺图返回 `manual_required`，要求用户自行验证并保留修改，不因缺图 undo/discard。
 
 ### 3. 发布
 
@@ -187,6 +190,8 @@ git diff --check
 - `replace_object_resource` 本轮仅允许 Image 与 Loader，拒绝 Button `state` 替换，避免误将整个按钮组件替换为单一资源。
 - 文本样式修改支持类型与枚举检查，暂不支持自动 external reload。
 - `verify_document` 可传入 `target + expected` 执行磁盘 XML 持久化比对，失败响应保留结构化 `error.details`（包含 `stage`、expected、actual、differences）。
+- Loader3D、Controller、Gear 和联动默认不保存，实际修改清空旧 Agent 历史，无完整撤销；`save=true` 保存整个组件并回读 XML，写入失败按实际响应报告，不假装已回滚。Controller 页面/控制器删除仍未开放。
+- SpineFixer 仅支持已验证的 Spine 4.2 二进制；绑定资源或插入 Spine 默认修复尺寸、锚点和 PMA 并保存所属包，独立于组件 `save=false`，不能由文档 undo/discard 回退。可显式 `fix_spine=false`；查询、截图和仅调整播放属性不修复。
 - 不允许删除根组件；不要把 `discard`、`undo` 和 `save` 混为同一语义。
 - 根组件点击穿透使用可序列化的 `opaque=false`；不要把无法持久化的根 `touchable` 宣称成功。
 - 不在代码、配置、文档或示例中提交个人绝对路径、密钥或真实 MCP 配置。
@@ -197,37 +202,5 @@ git diff --check
 
 - 涉及的包、文档、对象或文件；
 - 是否保存、发布、放弃或同步，以及作用范围；
-- 执行了哪些静态检查、MCP 握手和编辑器验证；
+- 执行了哪些静态检查、MCP 握手和编辑器验证；结构、持久化和视觉结论分开报告；
 - 哪些真实平台或环境仍未验证。
-
-## Loader3D 与视觉验证补充
-
-使用 `fgui_get_loader3d` 读取、`fgui_set_loader3d` 修改当前组件直属 Loader3D；已有包内 Spine 为首版范围，缺省保持、空串清除。保存后比对 XML；操作不进入 Agent undo/redo。跨帧操作返回 busy 时等待完成，不重复写入。
-
-修改完成后调用 `fgui_capture_document` 并观察 MCP 图像，按资源、布局、大小、皮肤、遮挡与可见性判断大体正确即可，不要求动画帧一致。若未获取图像，必须说明原因并要求用户在 Editor 自行验证，保留已完成修改，禁止因缺图自动回滚。`pending_review` 不是视觉通过；`manual_required` 不是结构或持久化失败。详见当前能力参考。
-
-## SpineFixer 与资源保存边界（0.8.5）
-
-Spine 导入结束后可调用 `fgui_fix_spine_anchor`；当前 Bridge 本身不提供 Spine 导入。绑定 resource_url 或插入 Spine 默认按 SpineFixer 修复包尺寸、锚点和 pma=false，并保存所属包元数据。此资源写入独立于组件 save=false，不能用文档 undo/discard 回滚；必须向用户区分 resourceFix 与组件保存结果。播放属性调整、查询和截图不自动修复。只支持已验证的 Spine 4.2 .skel；不支持版本或无有效包围盒需明确报错，可显式 fix_spine=false 跳过自动修复。
-
-Loader3D 实际修改会清空旧 Agent undo/redo；校验失败和无变化操作不清空。不得把缺图、PNG 解码失败当成修改失败：报告 manual_required 并要求用户自行验证。
-
-## Controller 基础编辑（0.8.6）
-
-先 `fgui_get_controllers` 读取当前文档控制器与稳定页面 ID，再创建控制器、追加页面、按 ID 重命名或切换当前页。只操作当前文档根组件；嵌套组件先打开所属文档。页面定位 ID/名称/索引三选一，重命名不改变页面 ID。不支持删除页面或控制器；Gear 与联动配置使用下节工具。
-
-默认不保存；save=true 保存整个组件并回读 XML。切页通过原生 setter 应用 Gear/联动，不修改 homePage，也不保证重新打开后维持当前页。实际编辑清空旧 Agent 历史，不支持完整撤销；失败保留实际状态，不声称联动已回滚。需要查看切页效果时截图；缺图仍按既有规则提示人工验证、不回滚。
-
-## Gear 编辑（0.8.7）
-
-先 `fgui_get_gears` 读取直属对象的现有 Gear，再用 `fgui_set_gear` 绑定/改绑控制器并完整替换一个 Gear 的页面配置。支持 display/text/icon/xy/size/color；页面使用稳定 pageId，禁止在嵌套对象上跨资源写入。未列出的普通页面值回退到显式 default_value；display 只接受 visible_page_ids，空数组是全页可见，不能误写成全部隐藏。
-
-set 是完整替换，不是局部补丁：保留需要沿用的页面条目。其它 Gear 与目标的缓动附加设置保留并回读验证。文字暂不支持竖线，图标仅图片 ui:// 或空串；百分比位置和 GearDisplay2 等高级编辑暂不开放。根据布局、自动尺寸、基础 visible 与显示锁检查实际效果，不能把读取到配置当作视觉通过。
-
-默认不保存；save=true 保存整个组件并校验对象全部 Gear 的磁盘 XML。修改清空旧 Agent 历史，不支持完整撤销；失败报告实际状态，不自动回滚。切页后截图观察显隐、文字、图标、位置、尺寸和颜色；缺图保留修改并要求用户自行验证。
-
-## 控制器联动（0.8.8）
-
-先用 `fgui_get_controller_actions` 读取执行顺序、配置和当前/直属子组件的控制器页面，再用 `fgui_upsert_controller_action` 追加或按 action_index 完整替换单条；`fgui_remove_controller_action` 只删除联动。索引不是稳定 ID，增删后重新读取。支持 change_page/play_transition，fromPageIds/toPageIds 空数组为任意页。目标页必须是稳定 ID，自引用/循环拒绝；目标 Transition 必须存在，delay 单位是秒，repeat=-1 为循环。
-
-配置编辑不触发联动或停止已运行的动画。save=true 保存整个父组件并校验 Action XML 内容和顺序，不写子组件资源；实际修改清旧 Agent 历史，无完整撤销。页面/控制器删除仍暂缓。Editor 6.1.4 普通编辑模式不会自动播放联动 Transition，必须在原生运行预览验证触发/退出；不要把 XML 持久化或单独手动播放当成联动播放成功。截图失败按 manual_required 要求人工验证并保留修改。完整字段和示例见 references/current-capabilities.md。

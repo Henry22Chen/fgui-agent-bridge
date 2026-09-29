@@ -1,6 +1,6 @@
 # Agent Bridge 当前能力参考
 
-> 这是独立 `fgui-agent-bridge` 仓库在 2026-09-28 的能力快照。功能变动时必须同步本文件，并以源码实际签名为最终依据。
+> 这是独立 `fgui-agent-bridge` 仓库在 2026-09-29 的能力快照。功能变动时必须同步本文件，并以源码实际签名为最终依据。
 
 ## 版本与通道
 
@@ -9,7 +9,7 @@
 - 代码真源：独立公开仓库；业务工程只安装插件与 Skill 快照
 - 队列协议：`1.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：56，其中新增资源引用、文本样式和文档验证工具；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
+- MCP 工具数：56；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 运行时目录：`.agent/requests`、`.agent/processing`、`.agent/responses`、`.agent/status.json`、`.agent/bridge.log`
 - `.agent/` 是运行时数据，不纳入 Git
@@ -31,10 +31,18 @@
 | `fgui_get_movieclip` / `fgui_update_movieclip` / `fgui_remove_movieclip` | MovieClip 资源定位；更新可传帧、FPS、Speed、延迟、Swing | 读取、更新或显式强制删除 MovieClip |
 | `fgui_get_active_document` / `fgui_get_tree` | 无 / `max_depth` | 读取活动文档或对象树 |
 | `fgui_select_object` / `fgui_set_property` | ID、路径或唯一名称 | 选择对象或修改白名单属性 |
-| `fgui_replace_object_resource` | target、resource_url、expected_type、state?、save? | 通过 Editor API 替换 Image、Loader 或 Button 资源引用 |
+| `fgui_replace_object_resource` | target、resource_url、expected_type、state?、save? | 通过 Editor API 替换 Image/Loader 资源引用，不支持 Button state |
 | `fgui_get_text_style` / `fgui_set_text_style` | target、style、save? | 读取或设置文本对象样式并回读 |
-| `fgui_verify_document` | max_depth、target? | 重新读取活动文档对象树和 Editor 状态 |
+| `fgui_verify_document` | `max_depth`, target?, `expected?`, `read_xml=true` | 无 expected 为快照；有 expected 时比对 Editor/磁盘 XML |
 | `fgui_insert_object` / `fgui_remove_object` | 资源 URL、坐标 / 目标 | 插入已有资源或删除非根对象 |
+| `fgui_get_loader3d` / `fgui_set_loader3d` | 对象定位；读取 `include_asset_info=true`；修改 `resource_url?`, `animation_name?`, `skin_name?`, `playing?`, `loop?`, `frame?`, `save=false`, `verify=true`, `skip_name_validation=false`, `fix_spine=true` | 读取/修改直属 Loader3D 的包内 Spine；省略保持，空字符串清除 |
+| `fgui_fix_spine_anchor` | `url?` 或 `package_name` + `item_name/item_path` | 修复 Spine 包围盒、锚点及 PMA，保存包元数据 |
+| `fgui_capture_document` | `scale=1`, `expected_document_url?` | 当前组件 PNG；MCP 返回图像块，CLI 返回文件元数据 |
+| `fgui_get_controllers` / `fgui_create_controller` | 无 / `name`, `page_names?`, `save=false` | 读取根控制器/页面/当前页；创建空或有初始页面的控制器 |
+| `fgui_add_controller_page` / `fgui_rename_controller_page` | `controller_name`, `name`, `save=false`；重命名另需页面定位 | 末尾追加或保留 ID 改名 |
+| `fgui_set_controller_page` | `controller_name`, `page_id/page_name/page_index` 三选一, `save=false` | 原生切页，应用 Gear/联动，不修改 homePage |
+| `fgui_get_gears` / `fgui_set_gear` | 对象定位；修改 `gear_type`, `controller_name`, `default_value?`, `page_values?`, `visible_page_ids?`, `save=false` | 读取/完整替换一个 Gear；其余 Gear 及缓动等附加配置保留 |
+| `fgui_get_controller_actions` / `fgui_upsert_controller_action` / `fgui_remove_controller_action` | `controller_name`；upsert 另传 `action`, `action_index?`, `save=false`；remove 必传索引 | 读取联动及可用目标页面；省略索引追加，指定索引替换或删除单条 |
 | `fgui_list_transitions` / `fgui_get_transition` | 无 / `name` | 读取当前组件的 Transition |
 | `fgui_upsert_transition` / `fgui_remove_transition` | 类型化 `transition` / `name` | 声明式创建、完整替换或删除 Transition |
 | `fgui_add_transition_item` / `fgui_update_transition_item` / `fgui_remove_transition_item` | `name`、类型化 `item`、`item_index` | 原子增删改 Transition 关键帧 |
@@ -43,7 +51,13 @@
 | `fgui_save_document` / `fgui_save_all` / `fgui_discard_document` | 无 | 保存、全部保存或放弃当前文档修改 |
 | `fgui_get_publish_settings` / `fgui_publish` | 包名? / 范围、包、分支、保存策略 | 读取或执行现有发布配置；发布前自动将 1920×1080/2K 级大图设置为 FairyGUI `alone` 纹理集，避免与小图混排 |
 
-## 动画语义
+## 组件与动画语义
+
+- **页面与作用域**：Controller/Action 属于当前文档根组件，Gear 属于直属子对象；联动可引用当前/直属子组件控制器，不改子组件资源。页面定位三选一，优先稳定 ID；名称不允许空白、逗号或控制字符，同一控制器中新页面名称不能重复。创建有页面的控制器或向空控制器追加首页时自动选中第一页。切页不修改 homePage，重开可能按首页规则重选。
+- **Gear 配置**：display 用 `visible_page_ids`，空数组是全页可见；其余类型必须传 `default_value` 和 `page_values=[{"pageId":"0","value":...}]`，未列页使用默认值。text 为不含竖线的字符串；icon 为图片 ui:// 或空串；xy 为整数 `{x,y}`；size 为非负整数 `{width,height,scaleX?,scaleY?}`（缩放默认 1）；color 为 `{color:"#RRGGBB",strokeColor?:"#RRGGBB"}`（描边默认黑）。数值绝对值不超过 1000000。set 是完整替换而非单页补丁；读取中的未序列化默认值为 null，其它 Gear 返回 XML。
+- **Action 配置**：`type` 为 change_page/play_transition；公共 `fromPageIds`、`toPageIds` 都使用源控制器页面 ID，省略/空数组匹配任意页，两组条件同时满足才执行。change_page 使用 `objectId`（空串/省略为当前组件）、`controllerName`、`targetPageId`；play_transition 使用 `transitionName`、`repeat`（默认 1，正整数或 -1 循环）、`delay`（默认 0，0..86400 秒）、`stopOnExit`（默认 false）。引用必须存在，按引用图拒绝自引用/循环。索引从 0 开始，增删后重读；更新完整替换单条，不传读取元数据 index/xml。未知类型可读取、保留、删除，不能 upsert。
+- **预览与外观**：编辑 Action 不触发执行；普通编辑模式切页可应用控制器/Gear，但 Editor 6.1.4 只在原生运行预览中播放联动 Transition。单独 `fgui_preview_animation` 不等于验证联动触发。Gear 最终外观还受布局、autoSize、基础 visible、显示锁等影响，不能只看对象树 visible 判断显隐。
+- **Loader3D**：仅已有包内 Spine，加载和名称校验最长等待 8 秒；busy 时等待，不重复写入。跳过名称校验不能绕过加载失败或资源类型校验。修改失败按响应区分实际状态与回退结果；`verify_document` 可校验资源 URL、动画、皮肤、播放及帧字段。
 
 ### Transition
 
@@ -71,6 +85,10 @@
 - 图片、字体和声音导入支持 `error`、`auto_rename`、`replace`。`replace` 只允许相同资源类型。
 - 所有本地导入路径均必须是绝对路径；导入和替换是磁盘写入。
 - `fgui_save_document` / `fgui_save_all` 保存文档和包改动；`fgui_discard_document` 只放弃当前文档未保存改动。
+- Loader3D、Controller、Gear、Action 默认不保存，实际编辑清空旧 Agent 历史，无完整撤销；无变化且不保存时保留历史。`save=true` 保存整个组件并回读 XML；Gear 校验目标全部 Gear，Action 校验内容和顺序。保存失败报告磁盘状态，不声称成功或完整回滚；保留 `error.details`。
+- SpineFixer 只接受已验证的 Spine 4.2 二进制 .skel 有效导出包围盒，修复尺寸/锚点并设置 pma=false，回读 package.xml。绑定 resource_url 或插入 Spine 默认修复并保存所属包，独立于组件 save=false，不能用文档 undo/discard 回退；`resourceFix` 单独报告。`fix_spine=false` / `--no-fix-spine` 可跳过，只读及仅播放属性调整不修复，不提供 Spine 导入。
+- 截图需实际观察，资源、布局、遮挡与可见性大体正确即可。成功为 pending_review；缺图/坏图返回 manual_required，要求用户自行验证，保留修改，不自动回滚。结构、持久化和视觉结论分别报告；对象树存在 Spine 不等于已捕获其图像。
+- 截图范围：scale<=4、单边<=4096、总像素<=8388608、PNG<=16 MiB；仅写 `.agent/captures/`，一天前的本工具截图会清理。
 - 发布前先用 `fgui_get_publish_settings`。发布期间桥接会阻止资源、动画及文档写操作。
 
 ## CLI 映射
@@ -78,21 +96,23 @@
 正式子命令包括：
 
 - 基础：`status`、`ping`、`project`、`packages`、`items`、`open`、`active`、`tree`、`select`、`set`、`insert`、`remove`
-- 资源：`create-component`、`create-button`、`import-image`、`import-font`、`import-sound`、`create-movieclip`、`get-movieclip`、`update-movieclip`、`remove-movieclip`
+- 资源：`create-component`、`create-button`、`import-image`、`import-font`、`import-sound`、`create-movieclip`、`get-movieclip`、`update-movieclip`、`remove-movieclip`、`get-loader3d`、`set-loader3d`、`fix-spine-anchor`
 - Transition：`transitions`、`get-transition`、`upsert-transition`、`remove-transition`、`add-transition-item`、`update-transition-item`、`remove-transition-item`
-- P0 验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`verify-document`
+- 属性与验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`verify-document`、`capture-document`
+- 状态编辑：`controllers`、`create-controller`、`add-controller-page`、`rename-controller-page`、`set-controller-page`、`get-gears`、`set-gear`、`get-controller-actions`、`upsert-controller-action`、`remove-controller-action`
 - 预览：`preview-transition`、`preview-movieclip`
 - 保存发布：`save`、`discard`、`save-all`、`history`、`undo`、`redo`、`publish-settings`、`publish`
 - `call` 仅调试原始 Action，不替代正式命令。
 
-全局参数 `--project`、`--editor`、`--timeout` 必须置于子命令前。
+全局参数 `--project`、`--editor`、`--timeout` 必须置于子命令前。Gear CLI 配置 JSON 使用 defaultValue/pageValues/visiblePageIds；Action JSON 与上述配置相同，使用 camelCase。
 
 ## 关键限制
 
 - 兼容基线是 FairyGUI Editor `6.1.4`；其他 6.x 尚未完成真实环境矩阵验证。
 - Loader3D 专用接口支持已有包内 Spine；不包含 DragonBones、SWF、外部 Spine 导入或运行时游戏代码层动画控制。
 - 通用包资源的删除、移动、重命名仍未开放；只提供带 `force` 和引用检查的 MovieClip 删除。
-- Windows 尚未完成真实环境端到端验证。
+- 不开放 Controller/页面删除与页面重排、Gear 解绑/删除或百分比 XY/Alpha 等高级编辑、跨多层子组件联动及特殊跟随页面值；文本样式不支持自动 external reload。
+- Windows Editor 6.1.4 已有隔离实测，未覆盖所有对象/业务组合；不等于业务工程发布和 Unity/设备验收。实现细节及历史验证记录见仓库 `tests/reports/`，不作为技能操作步骤。
 
 ## 文件变动同步矩阵与对照检查
 
@@ -104,126 +124,6 @@
 | `src/fairygui_agent/bridge_client.py` 队列、能力校验、超时或响应语义 | README 安装/协议、本 Skill、本文件 |
 
 1. `plugin/package.json`、`pyproject.toml`、`src/fairygui_agent/__init__.py`、`plugin/main.ts` 和 `plugin/main.js` 版本一致。
-2. 插件 capability、Action 分发、Python 动画 capability 检查、MCP 工具、CLI parser 和文档清单一致。
+2. 插件 capability、Action 分发、Python capability 检查、MCP 工具、CLI parser 和文档清单一致。
 3. `plugin/main.ts` 与重新编译的 `plugin/main.js` 一致。
 4. 创建/导入/预览变更应在 FairyGUI Editor `6.1.4` 隔离工程副本中验证，避免污染正式工程。
-
-### P0 可信持久化验证（0.8.5）
-
-- `replace_object_resource` 本轮仅允许 Image/Loader，拒绝 Button `state`，避免把整个 Button 替换误报为状态资源替换。
-- 保存时检查 Editor 文档变为未修改；`save=false` 或 `verify=false` 不会声称磁盘已持久化。
-- `verify_document` 可传 `target + expected`，默认读取组件 XML 比对目标字段；无 `expected` 时只是快照。
-- 失败响应保留 `error.details`，包含 `stage`、expected、actual 和 differences（如有）。
-- 自动 external reload、真实 FairyGUI Editor 端到端和 Unity/真机验收仍未完成。
-
-## Loader3D / Spine 与组件视觉验证（0.8.5）
-
-- `fgui_get_loader3d(object_id|object_path|object_name, include_asset_info=true)`：读取资源、动画、皮肤、播放和布局信息；列表不可用时返回原因。
-- `fgui_set_loader3d(..., resource_url?, animation_name?, skin_name?, playing?, loop?, frame?, save=false, verify=true, skip_name_validation=false)`：仅修改当前文档直属 Loader3D；嵌套对象请先打开所属组件。仅支持已导入包内 Spine，DragonBones 不在首版范围。缺省保持原值，空字符串清除，不支持 Agent undo/redo。
-- 修改前加载资源与校验名称，等待最长 8 秒；跨帧期间拒绝冲突命令，文档/对象/属性变化或工程关闭使请求失效。跳过名称校验不能绕过加载失败、超时或资源类型校验。
-- 修改后 Editor 拒绝时尽力恢复原属性并返回回退结果；保存失败报告磁盘状态不确定，不宣称回滚或持久化成功。`verify_document` 支持 `resourceURL`、`animationName`、`skinName`、`playing`、`loop`、`frame`；类型为 `loader3d`。
-- `fgui_capture_document(scale=1, expected_document_url?)`：仅截当前组件，以 MCP 图像块返回。scale 最大 4，单边最大 4096，总像素最大 8388608，PNG 最大 16 MiB。仅写工程 `.agent/captures/`，超过一天的本工具截图会清理。
-- 成功获取图片为 `pending_review`，仍需 Agent 观察。视觉上大体正确即可，检查资源、位置、大小、皮肤、遮挡与可见性，不要求动画帧或像素与效果图完全一致。
-- 获取图片失败返回 `manual_required`、原因和人工检查指引，**必须要求用户自行验证，保留已完成修改，不自动 undo/discard**。结构、持久化与视觉结论分别报告。
-- `spineCaptureSupported` 是已测捕获路径的能力信息（6.1.4 实测），`spinePresentInTree` 仅表示存在资源；`spineCaptured=null` 表示本次图像尚需观察，不能由对象树自动判定成功。
-- CLI 对应 `get-loader3d --id ID`、`set-loader3d --id ID '{"skinName":"default"}' --save`、`capture-document --scale 1`。CLI 返回截图文件元数据，MCP 才返回图像块。
-- 不自动发布 UI 包，不验证 Unity 运行时换装。实机结果和限制见 `tests/reports/spine-visual-validation.md`。
-
-截图实现先以独立 UpdateContext 更新组件，消除 Editor 外层视口裁剪，再 GetScreenShot；finally 恢复 Stage 渲染并释放返回纹理。该处理已用高于视口的混合组件验证。
-
-## 0.8.5 审查修复与 SpineFixer
-
-- 新增 `fgui_fix_spine_anchor(url? | package_name + item_name/item_path)`，对应 CLI `fix-spine-anchor URL`。可在现有导入流程结束后独立调用；本轮没有增加 Spine 文件导入接口。
-- 算法来自工程 `SpineFixer`：读取 Spine **4.2 二进制 .skel** 的导出包围盒，宽高四舍五入，按原点比例和 Y 轴翻转换算 anchor，设置 `pma=false`。Editor 6.1.4 对小数锚点向零截断，MCP 显式使用相同宿主语义并回读校验。
-- 版本未知、头部截断、非有限值、零/负包围盒或整数越界明确失败，不猜测尺寸，不回退到默认 100×100。其它 Spine 版本或 JSON 格式暂不自动修复。
-- `fgui_set_loader3d(resource_url=..., fix_spine=true)` 与 `fgui_insert_object(..., fix_spine=true)` 默认先修复 Spine；仅调整播放/皮肤而未传 resource_url 时不隐式修复。只读 get/capture 不写资源。
-- 修复会保存**所属包的元数据**（与原 SpineFixer 一致），并回读 package.xml。该资源写入独立于组件 `save=false`，不能由文档 undo/discard 回滚。结果用 `resourceFix` 分开报告；组件后续失败也保留已完成资源修复的信息。
-- 可显式传 `fix_spine=false`，CLI 为 `--no-fix-spine`，沿用已修复资源或自行处理不支持版本。旧插件缺少修复能力时拒绝默认自动修复请求，不会静默忽略参数。
-- Loader3D 实际修改后清空旧 Agent undo/redo；校验失败、无变化操作保留原历史。保存失败仍清空旧历史；完整回退恢复写入前的 dirty 状态。MCP 原生 undo/redo 回退保持未保存 Loader3D 修改标记，保存或放弃后结束该保护。
-- 异步响应在认领请求时固定目标工程目录，成功/失败回调不使用可能已切换的全局目录。
-- PNG 除块 CRC 外，还验证有界 zlib 解压、完整流、精确扫描行长度与滤波器值。支持 Unity 非交错 8-bit 灰度/RGB/灰度 Alpha/RGBA 截图；坏图或其它编码转 `manual_required`，要求用户自行验证，不回滚修改。
-- 验证与文件索引见 `tests/reports/spine-fixer-review-fixes.md`。
-
-## Controller 基础编辑（0.8.6）
-
-| MCP 工具 | 参数与作用 |
-| --- | --- |
-| `fgui_get_controllers` | 读取当前文档根组件所有控制器，包含页面 ID/名称/索引、当前页及只读 homePage 信息 |
-| `fgui_create_controller` | `name, page_names?, save=false`；缺省创建空控制器，指定页面时自动选中第一页 |
-| `fgui_add_controller_page` | `controller_name, name, save=false`；末尾追加，已有 ID 与顺序保留，空控制器的首个页面自动选中 |
-| `fgui_rename_controller_page` | `controller_name, name, page_id?/page_name?/page_index?, save=false`；只改名称，保留页面 ID |
-| `fgui_set_controller_page` | `controller_name, page_id?/page_name?/page_index?, save=false`；通过原生 setter 应用 Gear/联动 |
-
-页面定位三选一，优先使用稳定的 `page_id`；索引从 0 开始，重复名称拒绝按名称定位。新名称不允许空白、逗号或控制字符，同一控制器中新建页面名称不能重复。控制器名称必须唯一。嵌套组件需先打开所属文档，不开放删除控制器/页面或页面重排；Gear 和联动配置编辑见下节。
-
-默认只修改 Editor 内存；`save=true` 保存整个组件并回读实际 XML 中的控制器页面及 selected 字段。切换当前页不会修改运行时 `homePage`；Editor 重开文档可能按首页规则重选页面，不能将当前页保存当作运行时首页设置。实际改动清空旧 Agent undo/redo，不支持完整 Controller/Gear 联动撤销；未保存内容可通过 discard 放弃整个文档。无变化操作不清历史，但显式保存后清历史。写入或保存失败报告实际状态，不假装联动已回滚。
-
-CLI：`controllers`、`create-controller State --pages Idle Active --save`、`add-controller-page State Disabled`、`rename-controller-page State Enabled --page-id 1`、`set-controller-page State --page-index 1 --save`。全局 `--project` 放在子命令前。没有新增删除命令。
-
-验证结果及文件索引：`tests/reports/controller-basic-editing.md`。
-
-## Gear 编辑（0.8.7）
-
-新增 `fgui_get_gears`、`fgui_set_gear`，对应 CLI `get-gears` / `set-gear`。只操作当前文档直属子对象；先读取已有配置，再按稳定页面 ID 编辑。
-
-| gear_type | 配置 |
-| --- | --- |
-| `display` | `visible_page_ids=["1"]`：仅列出的页面可见；**空数组表示所有页面可见**，这是原生 GearDisplay 语义，不表示全部隐藏 |
-| `text` | 默认值和页面值为字符串，支持空串、换行和 XML 特殊字符；原生 `values` 用竖线分隔，暂不接受包含竖线字符（U+007C）的文本（反斜线也不能转义） |
-| `icon` | 字符串：工程内图片 `ui://` URL，空串清除；用于 Loader、Button 等具有图标语义的对象 |
-| `xy` | `{x, y}`，整数像素；暂不编辑已有百分比位置 Gear |
-| `size` | `{width, height, scaleX?, scaleY?}`，宽高非负整数，省略缩放为 1 |
-| `color` | `{color: "#RRGGBB", strokeColor?: "#RRGGBB"}`，省略描边为黑色；不编辑 Alpha |
-
-除 display 外，`default_value` 与 `page_values` 必须显式提供；`page_values` 格式为 `[{"pageId":"0","value":...}]`，允许空数组，未列出的页使用默认值。坐标/尺寸/缩放绝对值不超过 1000000。重复或不属于目标控制器的页面 ID 会在写入前拒绝；新 Gear 绑定及改绑控制器都通过同一个 set 工具完成。
-
-**set 是目标 Gear 的完整替换，不是页面值补丁。** 会保留其它 Gear，以及目标 Gear 的缓动等附加设置，并在 Editor 回读时验证；不新增缓动配置编辑、解绑或删除 Gear 接口，也不删除控制器页面。读取结果包含六类配置及对象 SupportGear 标记，其它 Gear 以原始 XML 返回；未序列化默认值返回 null，不猜测其值。
-
-默认不保存，`save=true` 保存整个组件并回读该对象全部 Gear XML。实际修改清空旧 Agent 历史并保持未保存标记，没有完整 Gear/联动撤销；保存或写入失败报告实际状态，不假装回滚。无变化且不保存时保留历史。布局关系、文本 autoSize、对象基础 visible、GearDisplay2、缓动或显示锁仍可能影响最终效果，需切页观察；对象树 visible 是基础属性，不能据此单独断言 GearDisplay 的最终可见性。
-
-Python/MCP 调用示例：
-
-```python
-fgui_get_gears(object_name="title")
-fgui_set_gear("text", "State", object_name="title", default_value="其他",
-              page_values=[{"pageId": "0", "value": "待领取"}, {"pageId": "1", "value": "已领取"}], save=True)
-fgui_set_gear("display", "State", object_name="badge", visible_page_ids=["1"], save=True)
-```
-
-CLI 示例：`set-gear text State '{"defaultValue":"其他","pageValues":[{"pageId":"1","value":"已领取"}]}' --name title --save`。CLI JSON 使用 camelCase；全局 `--project` 放在子命令前。
-
-截图失败仍要求用户人工验证，保留修改。六类 Gear 的实机样本、测试与文件索引见 `tests/reports/gear-editing.md`。
-
-## 控制器联动（0.8.8）
-
-| MCP 工具 | 作用 |
-| --- | --- |
-| `fgui_get_controller_actions(controller_name)` | 读取联动执行顺序及配置，列出当前/直属子组件可引用的控制器、稳定页面 ID 和当前页 |
-| `fgui_upsert_controller_action(controller_name, action, action_index?, save=false)` | 省略索引追加；提供索引则完整替换该条，保留其它联动 |
-| `fgui_remove_controller_action(controller_name, action_index, save=false)` | 删除指定联动，其它联动保持顺序；不删除页面 |
-
-`action` 使用以下 JSON 字段：
-
-- 公共：`type`、`fromPageIds`、`toPageIds`。两组页面条件都使用源控制器页面 ID，省略或空数组匹配任意页；两组条件同时满足才执行。
-- `type="change_page"`：`objectId`（空串/省略为当前组件，否则为直属子组件 ID）、`controllerName`、`targetPageId`。只支持显式稳定页面 ID，暂不支持跟随索引/名称等特殊值。拒绝自引用和会构成循环的控制器引用；按控制器引用图保守检查，不尝试证明页面条件能否阻断循环。
-- `type="play_transition"`：`transitionName`（当前组件中已有 Transition）、`repeat`（默认 1，正整数或 -1 循环）、`delay`（默认 0，0..86400 秒）、`stopOnExit`（默认 false）。退出条件是后续切页不再匹配该 Action；由原生执行器决定停止行为。
-
-索引从 0 开始，不是稳定 ID；增删后重新读取，不复用旧索引。更新是单条完整替换，省略字段恢复默认；返回的 `index`/`xml` 是读取元数据，不放进 `action`。未知类型可以读取、保留或删除，不能通过 upsert 编辑。Action 执行顺序与列表顺序一致；修改配置本身不执行联动，也不停止已经播放的动画。
-
-默认仅修改当前根组件内存；`save=true` 保存整个父组件并回读 XML，校验联动内容和顺序。子组件只作为引用目标，不写其资源文件。实际修改清空旧 Agent 历史，不支持完整撤销；失败报告实际状态、保留修改，不自动回滚。删除页面和控制器仍不开放。
-
-**Editor 编辑模式与运行预览不同**：切页可应用控制器/Gear，但 Editor 6.1.4 的普通编辑模式不自动播放 Action 中的 Transition；原生运行预览才会播放。`fgui_preview_animation` 可独立检查动画，不能代替联动触发验收。在运行预览中验证主控制器切页、子组件状态、动画进入/退出；获取截图失败时要求人工验证，不回滚。
-
-```python
-fgui_get_controller_actions("Main")
-fgui_upsert_controller_action("Main", {
-    "type": "change_page", "toPageIds": ["1"],
-    "objectId": "childId", "controllerName": "State", "targetPageId": "1"
-})
-fgui_upsert_controller_action("Main", {
-    "type": "play_transition", "toPageIds": ["1"],
-    "transitionName": "Show", "repeat": 1, "delay": 0, "stopOnExit": True
-}, save=True)
-```
-
-CLI 对应 `get-controller-actions Main`、`upsert-controller-action Main '<Action JSON>' [--action-index 0] [--save]`、`remove-controller-action Main 0 [--save]`。
