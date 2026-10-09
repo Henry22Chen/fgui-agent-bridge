@@ -46,6 +46,8 @@ graph LR
 
 ## 🚀 安装指南
 
+安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。以下命令从当前仓库安装，Bridge 与业务 FairyGUI 工程分开存放。
+
 ### 方式一：AI 智能安装（推荐）
 
 将下面的提示词发送给能够操作本地终端和文件的 AI 编程 Agent（如 Cursor、Claude Code、Codex 等）：
@@ -53,7 +55,7 @@ graph LR
 ```text
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
-源仓库：https://github.com/Wilson520403/fgui-agent-bridge.git
+源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 ```
@@ -65,7 +67,7 @@ graph LR
 #### 1. 克隆 Bridge 仓库并准备环境
 
 ```bash
-git clone https://github.com/Wilson520403/fgui-agent-bridge.git
+git clone https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
@@ -155,6 +157,8 @@ uv run python scripts/sync_to_project.py \
 ---
 
 ## 🔄 检查与拉取更新
+
+以下命令在从当前仓库克隆的 Bridge 目录中执行。`--pull` 沿用当前分支的跟踪远端，不会自动切换仓库；可用 `git remote -v` 核对地址。若此前从其他仓库安装，建议按上文将当前仓库克隆到新目录，再把 MCP 配置中的 Bridge 路径改为新目录，并重新同步插件与 Skill。
 
 当 Bridge 源仓库有功能更新或 Bug 修复时，可通过一条命令自动从源仓库安全拉取最新代码（`git pull --ff-only`）、同步 Python 环境（`uv sync`），并将最新插件与 Skill 刷新到目标工程：
 

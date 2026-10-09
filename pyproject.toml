@@ -18,8 +18,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Wilson520403/fgui-agent-bridge"
-Repository = "https://github.com/Wilson520403/fgui-agent-bridge"
+Homepage = "https://github.com/Henry22Chen/fgui-agent-bridge"
+Repository = "https://github.com/Henry22Chen/fgui-agent-bridge"
 
 [project.scripts]
 fgui-agent = "fairygui_agent.cli:main"

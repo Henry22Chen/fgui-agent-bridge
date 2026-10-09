@@ -7,7 +7,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 
 ## 目标与真源
 
-本 Skill 面向独立 `fgui-agent-bridge` 仓库。该仓库是 Bridge、MCP、CLI 和 Skill 的唯一开发真源，业务工程中的插件与 Skill 仅是同步快照。
+本 Skill 面向独立 [Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge) 仓库。该仓库是 Bridge、MCP、CLI 和 Skill 的唯一开发真源，业务工程中的插件与 Skill 仅是同步快照。
 
 - FairyGUI 插件源码：`plugin/main.ts`
 - FairyGUI 运行文件：`plugin/main.js`；修改源码后必须重新编译并一起提交
@@ -108,9 +108,11 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 脚本会先校验所选目录，再写入目标工程的 `plugins/agent-bridge/`；无效目录或取消选择时不得写入。自动化环境可改用 `--project PATH --apply`。
 
-在独立 Bridge 仓库准备 Python 环境：
+首次安装先克隆当前仓库并准备 Python 环境；前述同步命令均在该仓库目录执行：
 
 ```bash
+git clone https://github.com/Henry22Chen/fgui-agent-bridge.git
+cd fgui-agent-bridge
 uv sync --frozen
 ```
 
@@ -152,6 +154,8 @@ uv run python scripts/sync_to_project.py \
 # 或通过 CLI update 命令执行
 uv run fgui-agent --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT update --pull --apply
 ```
+
+`--pull` 使用本地分支的跟踪远端，不会自动切换源仓库。从其他仓库迁移时，按上述地址另行克隆、更新 MCP 的 Bridge 路径，再同步插件与 Skill。
 
 `--project` 与 `--choose-project` 互斥。脚本不创建 Git 元数据、不复制缓存、不删除目标目录中的其他文件。若更新了插件文件，需重新打开 FairyGUI Editor 工程加载。
 
