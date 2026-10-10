@@ -39,8 +39,8 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 
 ### 1. 连接与定位
 
-1. 使用 `fgui_status` 查看当前会话是否已选择工程、编辑器是否在线、插件版本是否匹配以及心跳年龄；它不会唤醒编辑器。
-2. 工程未选择时调用 `fgui_use_project`，参数可为 `.fairy` 文件、FairyGUI 工程目录或包含 `FairyGUI/FairyGUI.fairy` 的仓库目录。
+1. 使用 `fgui_status` 核对工程路径属于当前副本，并查看在线状态、版本与心跳；它不会唤醒编辑器。仅有项目级 `FGUI_PROJECT_PATH` 不代表本机 MCP 已安装。
+2. 定位失败或目标不符时，在当前副本查找 `.fairy` 并以绝对路径调用 `fgui_use_project`；多个候选且无法判断时询问用户。不要依赖 Bridge 递归查找 `UIProject`，其目录定位只检查直接 `.fairy` 和固定 `FairyGUI/FairyGUI.fairy`。
 3. 需要唤醒或验证编辑器时调用 `fgui_ping`。不要把“请求已写入队列”当作 FairyGUI 已完成。
 4. 不知道包名时先 `fgui_list_packages`；不知道资源时用 `fgui_list_items`。
 5. 打开组件后先确认活动文档，再读取对象树。修改优先使用稳定对象 ID，其次对象路径；只有名称唯一时才使用名称。
@@ -96,8 +96,9 @@ uv run fgui-agent --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT verify-document -
 安装边界必须明确区分：
 
 - FairyGUI Editor 插件安装到每个目标 FairyGUI 工程的 `plugins/agent-bridge/`。
-- MCP/CLI 始终从独立 Bridge 仓库或已安装的 Python 工具环境运行，不放入 FairyGUI 工程。
+- MCP/CLI 从本机固定目录中的独立 Bridge 仓库或已安装的 Python 工具环境运行，多个工作副本复用，不放入 FairyGUI 工程。
 - Skill 可选安装到 Codex 操作的目标代码仓库 `.agents/skills/fgui-agent-bridge/`。
+- 团队操作入口由业务根目录 `AGENTS.md` 引用 `FairyGUI-Editor-操作规范.md`，只在 FairyGUI 任务中检查环境；缺少 MCP 时先询问安装或配置，拒绝后不自动调用 MCP/CLI 或直接改 XML。
 - `.agent/` 是目标 FairyGUI 工程生成的运行时队列，不是安装文件，也不纳入 Git。
 
 普通使用者优先通过同步脚本选择 FairyGUI 工程并安装插件：
@@ -116,15 +117,19 @@ cd fgui-agent-bridge
 uv sync --frozen
 ```
 
-注册 Codex MCP 时同时保留 Bridge 仓库路径与目标 FairyGUI 工程路径：
+Codex 安装采用两层配置，完整示例见源仓库 README 的安装指南：
 
-```bash
-codex mcp add fgui -- \
-  uv run \
-  --project /ABSOLUTE/PATH/TO/FGUI-AGENT-BRIDGE \
-  fgui-agent-mcp \
-  --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT/FairyGUI.fairy
+- 用户级 `~/.codex/config.toml` 的 `mcp_servers.fgui` 指向本机 `.venv/Scripts/fgui-agent-mcp.exe`（Windows）或 `.venv/bin/fgui-agent-mcp`；env 保存本机 Editor 路径与 `PYTHONUTF8=1`。
+- 本机启动配置就绪并获准配置后，将共享的 `codex-fgui-project.example.toml` 模板合入本地项目 `.codex/config.toml`，只补相对工程路径，例如：
+
+```toml
+[mcp_servers.fgui.env]
+FGUI_PROJECT_PATH = 'UIProject/TextDemo.fairy'
 ```
+
+两层均不固定 `cwd` 或 `fgui-agent-mcp --project`；移除旧固定值，从项目根目录启动 Codex（或用 `codex -C ROOT`），项目需受信任。相对工程路径按 MCP 进程工作目录解析；修改后重启会话并核对目标。其他客户端不假定采用相同继承与工作目录规则。
+
+团队只共享模板；缺少用户级启动命令时，自动加载的项目级 `fgui.env` 会报 `invalid transport` 并阻止会话创建。不要将该片段提交进共享 `.codex/config.toml`；已跟踪该文件时保留其他设置，移出 `fgui` 片段。
 
 Skill 按需复制到目标代码仓库：
 
@@ -134,7 +139,9 @@ cp -R .agents/skills/fgui-agent-bridge \
   /ABSOLUTE/PATH/TO/TARGET-REPOSITORY/.agents/skills/
 ```
 
-完成安装后先执行低风险读取：`status → ping → project → packages`，不要以创建、导入、保存或发布作为首次连接测试。
+将根目录规范和模板复制到业务根目录，并合入已有 `AGENTS.md` 引用，不能只安装 Skill 后期待未加载时自动提示。插件、Skill、规范、引用及模板可提交 Git；同步脚本不自动复制根目录文件、合入引用或配置 MCP。
+
+完成安装后，在 MCP 客户端执行低风险读取：`status → ping → project → packages`，确认目标属于当前副本；仅 CLI ping 成功不算 MCP 已加载。不要以创建、导入、保存或发布作为首次连接测试。
 
 ### 同步与更新脚本
 
@@ -198,7 +205,7 @@ git diff --check
 - SpineFixer 仅支持已验证的 Spine 4.2 二进制；绑定资源或插入 Spine 默认修复尺寸、锚点和 PMA 并保存所属包，独立于组件 `save=false`，不能由文档 undo/discard 回退。可显式 `fix_spine=false`；查询、截图和仅调整播放属性不修复。
 - 不允许删除根组件；不要把 `discard`、`undo` 和 `save` 混为同一语义。
 - 根组件点击穿透使用可序列化的 `opaque=false`；不要把无法持久化的根 `touchable` 宣称成功。
-- 不在代码、配置、文档或示例中提交个人绝对路径、密钥或真实 MCP 配置。
+- 不提交个人绝对路径、密钥、用户级 MCP 配置或本地项目配置中的 `fgui` 片段；相对工程路径以不自动加载的模板随 Git 分发。
 
 ## 输出要求
 

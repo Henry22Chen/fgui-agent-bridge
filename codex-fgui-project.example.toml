@@ -1,0 +1,5 @@
+# 团队共享模板，不会被 Codex 自动加载。
+# 本机用户级 fgui 启动配置就绪后，经用户同意合入项目 .codex/config.toml。
+# 按项目实际位置修改；相对路径要求从工作副本根目录启动 Codex。
+[mcp_servers.fgui.env]
+FGUI_PROJECT_PATH = 'UIProject/TextDemo.fairy'

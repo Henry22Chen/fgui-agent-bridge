@@ -9,6 +9,8 @@
 
 > **说明**：Bridge 仓库与业务 FairyGUI 工程分开存放。FairyGUI 工程只需安装轻量插件；在宿主 IDE 中可按需安装 Skill 提高 AI 操作准确率。
 
+业务项目可在根目录放置 [FairyGUI Editor 操作规范](FairyGUI-Editor-操作规范.md)，由 `AGENTS.md` 引用，在需要操作 FairyGUI 工程时检查环境、按需加载技能。
+
 ---
 
 ## 🏗️ 工作原理
@@ -46,7 +48,7 @@ graph LR
 
 ## 🚀 安装指南
 
-安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。以下命令从当前仓库安装，Bridge 与业务 FairyGUI 工程分开存放。
+安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
 ### 方式一：AI 智能安装（推荐）
 
@@ -58,6 +60,9 @@ graph LR
 源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
+如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
+同步 Skill，将仓库根目录的 FairyGUI-Editor-操作规范.md 复制到目标代码仓库根目录，并将引用合入已有 AGENTS.md，不覆盖原有约定。
+共享 codex-fgui-project.example.toml 模板；实际 .codex/config.toml 中的 fgui 片段在本机 MCP 安装配置就绪后合入，不提交到团队自动加载的配置中。
 ```
 
 ---
@@ -65,6 +70,8 @@ graph LR
 ### 方式二：手动安装
 
 #### 1. 克隆 Bridge 仓库并准备环境
+
+以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
 git clone https://github.com/Henry22Chen/fgui-agent-bridge.git
@@ -95,7 +102,43 @@ uv run python scripts/sync_to_project.py \
 
 #### 3. 配置 MCP Server
 
-你可以根据所使用的 AI 客户端添加 MCP 配置。通用配置格式如下（可参考 [.mcp.example.json](.mcp.example.json)）：
+**Codex：用户级保存本机信息，项目级保存相对工程路径。**
+
+在每位开发者自己的 `~/.codex/config.toml` 中合入以下配置，路径换成本机实际安装位置。Windows 示例：
+
+```toml
+[mcp_servers.fgui]
+command = 'C:\Tools\fgui-agent-bridge\.venv\Scripts\fgui-agent-mcp.exe'
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+
+[mcp_servers.fgui.env]
+FAIRYGUI_EDITOR_PATH = 'C:\Path\To\FairyGUI-Editor.exe'
+PYTHONUTF8 = '1'
+```
+
+macOS 的启动入口为 `<Bridge 目录>/.venv/bin/fgui-agent-mcp`；Editor 路径按本机实际位置填写。用户级配置不提交到业务 Git 仓库。
+
+本机用户级启动配置就绪后，将 [codex-fgui-project.example.toml](codex-fgui-project.example.toml) 中的相对工程路径合入业务项目的本地 `.codex/config.toml`。以下以 `UIProject/TextDemo.fairy` 为例，按项目实际位置修改；目录结构相同的工作副本可复用同一模板：
+
+```toml
+[mcp_servers.fgui.env]
+FGUI_PROJECT_PATH = 'UIProject/TextDemo.fairy'
+```
+
+同名 `fgui` 配置合并后，项目级路径与用户级启动命令一起生效；项目需要处于受信任状态。两层都省略 `cwd`，也不给 `fgui-agent-mcp` 固定 `--project` 参数；迁移旧配置时移除这些固定值，保留其他已有设置。参见 [Codex 配置作用域](https://learn.chatgpt.com/docs/config-file/config-basic)。
+
+**团队共享模板，不共享自动加载的 `fgui` 配置片段。** 未安装者缺少用户级启动命令时，仅有 `[mcp_servers.fgui.env]` 的项目配置会报 `invalid transport`，阻止创建会话，Agent 无法发起安装询问。因此先提交模板与操作入口，由 Agent 获准安装/配置后再合入本地配置。若团队已跟踪 `.codex/config.toml`，保留其他共享设置，移出其中的 `fgui` 片段；实际 MCP 配置由各开发者本地管理。
+
+统一从工作副本根目录启动 Codex，或显式指定根目录：
+
+```bash
+codex -C /ABSOLUTE/PATH/TO/YOUR-CODE-REPOSITORY
+```
+
+未设置 `cwd` 时，Codex 按会话工作目录启动 MCP；Bridge 将相对 `FGUI_PROJECT_PATH` 按该目录解析。不要从 `Assets` 等子目录启动后仍沿用根目录相对路径。配置修改后重新启动会话；工程已正确定位时无需额外调用 `fgui_use_project`，定位失败或目标不符时由 Agent 查找当前副本的 `.fairy`，再以绝对路径调用它。
+
+**其他客户端：** 通用 JSON 配置如下（可参考 [.mcp.example.json](.mcp.example.json)）；工作目录与配置继承规则以对应客户端为准，不直接套用上述 Codex 流程。
 
 ```json
 {
@@ -120,30 +163,27 @@ uv run python scripts/sync_to_project.py \
 
 - **Cursor**：在 `~/.cursor/mcp.json` 或项目根目录 `.cursor/mcp.json` 中粘贴上述配置。
 - **Claude Desktop**：编辑 `claude_desktop_config.json`（macOS: `~/Library/Application Support/Claude/`，Windows: `%APPDATA%\Claude\`）。
-- **Codex CLI**：
-  ```bash
-  codex mcp add fgui \
-    --env FGUI_PROJECT_PATH=/ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT \
-    -- uv run --project /ABSOLUTE/PATH/TO/fgui-agent-bridge fgui-agent-mcp
-  ```
+- **Codex CLI / IDE**：使用上面的用户级与项目级 TOML 配置。
 - **VS Code (Cline / Roo Code)**：在扩展的 MCP Settings 中添加名为 `fgui` 的 stdio 服务。
 
 #### 4. 验证连接
 
-启动 FairyGUI Editor 并打开目标工程，然后执行：
+启动 FairyGUI Editor 并打开目标工程，重新启动 Agent 客户端加载 MCP 配置。让 Agent 调用 `fgui_status → fgui_ping → fgui_get_project`，核对返回的工程路径属于当前副本；定位失败或目标不符时先用 `fgui_use_project` 选择正确的 `.fairy`。
+
+也可使用 CLI 排查 Bridge 到 Editor 的连接：
 
 ```bash
 uv run --project /ABSOLUTE/PATH/TO/fgui-agent-bridge \
   fgui-agent --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT ping
 ```
 
-若返回 `{"status": "ok", ...}` 则表明连接成功。
+CLI 返回 `{"status": "ok", ...}` 只证明 Bridge 到 Editor 可用；客户端内实际出现 MCP 工具并完成上述调用，才算 MCP 配置验证通过。
 
 ---
 
-### 可选：安装 Agent Skill
+### 推荐：安装 Agent Skill 与团队操作入口
 
-Skill 可以让 AI 更好地遵循 FairyGUI 的属性规范与动画约定。使用同步脚本可一键将 Skill 同步至目标业务代码仓库：
+为使团队成员拉取项目后，在需要操作 FairyGUI 时主动检查 MCP，先同步 Skill，再合入下面的操作入口。使用同步脚本将 Skill 同步至目标业务代码仓库：
 
 ```bash
 uv run python scripts/sync_to_project.py \
@@ -153,6 +193,29 @@ uv run python scripts/sync_to_project.py \
 ```
 
 或手动将 `.agents/skills/fgui-agent-bridge/` 目录复制到目标代码仓库的 `.agents/skills/` 目录下。
+
+将仓库根目录的 `FairyGUI-Editor-操作规范.md` 和 `codex-fgui-project.example.toml` 复制到业务项目根目录，并在其 `AGENTS.md` 中合入：
+
+```markdown
+需要读取、修改或验证 FairyGUI 工程时，先阅读并遵守
+[FairyGUI Editor 操作规范](FairyGUI-Editor-操作规范.md)，按环境检查结果决定是否加载技能。
+缺少本机 MCP 时先询问是否安装或配置；用户拒绝则本次任务不使用 MCP 操作 FGUI。
+```
+
+`--skill-root` 仅同步 Skill；根目录规范、模板与 `AGENTS.md` 引用需单独合入，不覆盖已有文件内容。本机 MCP 就绪后再合入本地项目配置。
+
+提交到业务 Git 的内容：
+
+- FairyGUI 工程的 `plugins/agent-bridge/`。
+- `.agents/skills/fgui-agent-bridge/`。
+- 根目录 `FairyGUI-Editor-操作规范.md` 和 `AGENTS.md` 中的引用。
+- 根目录 `codex-fgui-project.example.toml` 相对路径模板。
+
+用户级 MCP 配置、本地项目配置中的 `fgui` 片段、本机绝对路径、密钥、`.venv/` 和运行时 `.agent/` 不提交。项目 `.codex/config.toml` 若完全按本地配置管理，应加入业务仓库的 `.gitignore`；已跟踪该文件的项目按上文保留其他共享设置。
+
+其他开发者拉取后，Codex 在开始 FairyGUI 任务时按入口检查：已有 MCP 则验证当前工程；本机只有 Bridge 则询问是否配置；未找到 Bridge 则询问已有位置或是否安装。仅有项目级路径配置不代表本机已安装 MCP。用户拒绝后，本次任务不再提示，不使用 MCP，也不自动改用 CLI 或直接修改 XML，可提供只读分析与手工操作步骤；用户另行明确授权其他编辑方式时按其要求处理。
+
+提示由 Agent 在处理 FairyGUI 任务时遵循上述约定发起，Git 拉取本身不会安装 MCP 或弹出提示。其他客户端需在其对应的 Agent 指令入口引用同一规范。
 
 ---
 
