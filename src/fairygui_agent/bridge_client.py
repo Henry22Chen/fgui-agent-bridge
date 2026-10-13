@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from . import PROTOCOL_VERSION, __version__
-from .editor_launcher import EditorLauncher
+from .editor_launcher import EditorLaunchError, EditorLauncher, process_scope
 from .project_locator import ProjectContext, ProjectLocator
 
 REQUIRED_CAPABILITIES = frozenset(
@@ -120,14 +120,10 @@ class BridgeClient:
         return self.locator.resolve()
 
     def read_status(self) -> dict[str, Any] | None:
-        status_file = self.project_context().queue_root / "status.json"
-        if not status_file.exists():
-            return None
         try:
-            value = json.loads(status_file.read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) else None
-        except (OSError, json.JSONDecodeError):
-            return None
+            return self.launcher.read_project_status(self.project_context().project_file)
+        except EditorLaunchError as exc:
+            raise BridgeError(str(exc)) from exc
 
     def describe_status(self) -> dict[str, Any]:
         context = self.project_context()
@@ -138,7 +134,7 @@ class BridgeClient:
             "project": context.as_dict(),
             "statusFile": str(context.queue_root / "status.json"),
             "heartbeatAgeSeconds": status_age(status),
-            "online": status is not None and status_age(status) <= self.heartbeat_max_age,
+            "online": status is not None and status.get("online") is True and status_age(status) <= self.heartbeat_max_age,
             "bridgeClientVersion": __version__,
             "pluginVersion": plugin_version,
             "versionMatch": version_match,
@@ -152,6 +148,10 @@ class BridgeClient:
         return result
 
     def _validate_status(self, status: dict[str, Any]) -> None:
+        project = status.get("project")
+        base_path = project.get("basePath") if isinstance(project, dict) else None
+        if not isinstance(base_path, str) or Path(base_path).resolve() != self.project_context().project_dir.resolve():
+            raise BridgeError("插件当前工程路径与目标工程不一致，拒绝发送指令。")
         protocol = str(status.get("protocolVersion", ""))
         expected_major = PROTOCOL_VERSION.split(".", 1)[0]
         actual_major = protocol.split(".", 1)[0] if protocol else ""
@@ -171,24 +171,18 @@ class BridgeClient:
     def ensure_ready(self) -> dict[str, Any]:
         context = self.project_context()
         status = self.read_status()
-        if status_age(status) <= self.heartbeat_max_age:
+        if status and status.get("online") is True and status_age(status) <= self.heartbeat_max_age:
             self._validate_status(status)
             return status
 
-        self.launcher.wake(context.project_file)
-        activate_deadline = time.monotonic() + 2.0
-        while time.monotonic() < activate_deadline:
-            status = self.read_status()
-            if status_age(status) <= self.heartbeat_max_age:
-                self._validate_status(status)
-                return status
-            time.sleep(0.1)
-
-        self.launcher.wake(context.project_file, open_project=True)
-        deadline = time.monotonic() + 5.0
+        try:
+            self.launcher.wake(context.project_file, open_project=True)
+        except EditorLaunchError as exc:
+            raise BridgeError(str(exc)) from exc
+        deadline = time.monotonic() + 7.0
         while time.monotonic() < deadline:
             status = self.read_status()
-            if status_age(status) <= self.heartbeat_max_age:
+            if status and status.get("online") is True and status_age(status) <= self.heartbeat_max_age:
                 self._validate_status(status)
                 return status
             time.sleep(0.1)
@@ -234,8 +228,10 @@ class BridgeClient:
                     f"(编辑器 bridge {bridge_version})。请更新并重新加载 0.8.1 或更高版本插件。"
                 )
 
-        request_dir = context.queue_root / "requests"
-        response_dir = context.queue_root / "responses"
+        scope = process_scope(status)
+        queue_root = context.queue_root / "instances" / scope if scope else context.queue_root
+        request_dir = queue_root / "requests"
+        response_dir = queue_root / "responses"
         request_dir.mkdir(parents=True, exist_ok=True)
         response_dir.mkdir(parents=True, exist_ok=True)
 
@@ -248,6 +244,7 @@ class BridgeClient:
             "action": action,
             "params": params or {},
             "protocolVersion": PROTOCOL_VERSION,
+            "projectPath": str(context.project_dir),
             "createdAt": datetime.now().astimezone().isoformat(),
             "clientPid": os.getpid(),
         }
@@ -267,15 +264,11 @@ class BridgeClient:
 
         call_timeout = self.timeout if timeout is None else timeout
         deadline = time.monotonic() + call_timeout
-        wake_again_at = time.monotonic() + min(1.0, call_timeout / 2)
-        woke_again = False
+        # 请求已绑定目标实例。慢响应、超时及宽限期都不能再次创建编辑器进程。
         while time.monotonic() < deadline:
             response = read_response()
             if response is not None:
                 return response
-            if not woke_again and time.monotonic() >= wake_again_at:
-                self.launcher.wake(context.project_file)
-                woke_again = True
             time.sleep(0.05)
 
         grace_deadline = time.monotonic() + self.timeout_grace

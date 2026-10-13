@@ -1,17 +1,20 @@
 # Agent Bridge 当前能力参考
 
-> 这是独立 `fgui-agent-bridge` 仓库在 2026-09-29 的能力快照。功能变动时必须同步本文件，并以源码实际签名为最终依据。
+> 这是独立 `fgui-agent-bridge` 仓库在 2026-10-13 的能力快照。功能变动时必须同步本文件，并以源码实际签名为最终依据。
 
 ## 版本与通道
 
-- Bridge 版本：`0.8.8`
+- Bridge 版本：`0.8.9`
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
-- 队列协议：`1.0`
+- 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
 - MCP 工具数：56；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
-- 运行时目录：`.agent/requests`、`.agent/processing`、`.agent/responses`、`.agent/status.json`、`.agent/bridge.log`
+- 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
+- Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
+- IL2CPP 宿主不支持 `.NET Process.StartTime` 时，初始化运行一次隐藏 PowerShell 只读探针，仅查询宿主提供的 PID；失败记录 `editorIdentityError`，客户端拒绝复用
+- 慢响应不会启动进程；首次启动使用跨 MCP 锁和 30 秒冷却。有身份不明的现存 Editor 或多个目标实例时明确报错，不启动、不按标题猜测或自动切换工程
 - `.agent/` 是运行时数据，不纳入 Git
 
 ## MCP 工具签名

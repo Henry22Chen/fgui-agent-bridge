@@ -2,8 +2,8 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.8.8`
-- **队列协议**：`1.0`
+- **版本**：`0.8.9`
+- **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
 
@@ -39,6 +39,14 @@ graph LR
 ---
 
 ## 依赖要求
+
+Windows 连接会核对插件报告的当前工程目录、PID、进程启动时间及真实 Editor exe；不会凭窗口标题或启动参数复用进程。请求使用 `.agent/instances/<PID>-<启动时间>/` 独立队列，其他窗口不能抢走指令。工程关闭、切换或插件卸载时，原实例记录会标记离线。
+
+部分 IL2CPP 编辑器支持读取当前 PID，但不支持 `.NET Process.StartTime`，插件会通过官方 `ProcessUtil.Start` 在初始化时运行一次隐藏的 Windows PowerShell 只读身份探针。探针只查询编辑器提供的 PID，客户端仍独立核对真实 Editor exe 和启动时间；探针失败会记录 `editorIdentityError` 并拒绝复用，不继续开窗。
+
+慢响应和超时不会启动新进程。已有进程身份不明、目标工程有多个实例时会明确报错，请手动确认并保留目标实例；不会自动切换其他工程。仅在没有 FairyGUI 进程时允许带目标工程参数首次启动，并用跨会话锁及 30 秒冷却防止重复启动。
+
+从 `0.8.8` 升级时须同步插件、重新加载目标工程，并重启使用 Bridge 的 MCP 会话。实例队列使用协议 `2.0`，旧协议明确拒绝，避免新旧队列混用；不要反复重试旧会话，也不要为重载而强行结束持有未保存文档的 Editor。
 
 - Python `3.10+`
 - [uv](https://docs.astral.sh/uv/) 包管理器

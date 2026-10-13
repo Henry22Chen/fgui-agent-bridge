@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from fairygui_agent import __version__
-from fairygui_agent.bridge_client import REQUIRED_CAPABILITIES, BridgeClient
+from fairygui_agent import PROTOCOL_VERSION, __version__
+from fairygui_agent.bridge_client import REQUIRED_CAPABILITIES, BridgeClient, BridgeError
 from fairygui_agent.project_locator import ProjectLocator
 
 
@@ -20,7 +20,8 @@ def _write_fresh_status(queue_root: Path) -> None:
     status = {
         "online": True,
         "bridgeVersion": __version__,
-        "protocolVersion": "1.0",
+        "protocolVersion": PROTOCOL_VERSION,
+        "project": {"basePath": str(queue_root.parent)},
         "capabilities": sorted(REQUIRED_CAPABILITIES),
         "timestamp": datetime.now(timezone.utc)
         .isoformat(timespec="milliseconds")
@@ -36,9 +37,11 @@ def _make_client(root: Path) -> BridgeClient:
     (queue_root / "requests").mkdir(parents=True)
     (queue_root / "responses").mkdir(parents=True)
     _write_fresh_status(queue_root)
+    launcher = MagicMock()
+    launcher.read_project_status.side_effect = lambda _: json.loads((queue_root / "status.json").read_text(encoding="utf-8"))
     return BridgeClient(
         ProjectLocator(str(project_file)),
-        MagicMock(),
+        launcher,
         timeout=0.1,
         heartbeat_max_age=15.0,
         timeout_grace=0.3,
@@ -53,6 +56,7 @@ class TestBridgeClientTimeout(unittest.TestCase):
             with self.assertRaisesRegex(TimeoutError, "重复执行"):
                 client.call("ping")
             self.assertEqual(list((root / ".agent" / "requests").glob("*.json")), [])
+            client.launcher.wake.assert_not_called()
 
     def test_late_response_within_grace_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -89,6 +93,34 @@ class TestBridgeClientTimeout(unittest.TestCase):
             finally:
                 thread.join()
             self.assertEqual(result, {"late": True})
+            client.launcher.wake.assert_not_called()
+
+    def test_other_project_status_is_rejected_before_queue_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            client = _make_client(root)
+            status_file = root / ".agent/status.json"
+            status = json.loads(status_file.read_text(encoding="utf-8"))
+            status["project"]["basePath"] = str(root / "other-project")
+            status_file.write_text(json.dumps(status), encoding="utf-8")
+            with self.assertRaisesRegex(BridgeError, "工程路径"):
+                client.call("get_tree")
+            client.launcher.wake.assert_not_called()
+            self.assertEqual(list((root / ".agent/requests").glob("*.json")), [])
+
+    def test_request_is_bound_to_selected_process_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            client = _make_client(root)
+            status_file = root / ".agent/status.json"
+            status = json.loads(status_file.read_text(encoding="utf-8"))
+            status.update(editorProcessId=42, editorProcessStartedAt="202610130100001234567")
+            status_file.write_text(json.dumps(status), encoding="utf-8")
+            with self.assertRaises(TimeoutError):
+                client.call("get_tree")
+            self.assertTrue((root / ".agent/instances/42-202610130100001234567/responses").is_dir())
+            self.assertEqual(list((root / ".agent/requests").glob("*.json")), [])
+            client.launcher.wake.assert_not_called()
 
 
 if __name__ == "__main__":

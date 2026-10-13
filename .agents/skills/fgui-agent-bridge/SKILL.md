@@ -41,7 +41,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 
 1. 使用 `fgui_status` 核对工程路径属于当前副本，并查看在线状态、版本与心跳；它不会唤醒编辑器。仅有项目级 `FGUI_PROJECT_PATH` 不代表本机 MCP 已安装。
 2. 定位失败或目标不符时，在当前副本查找 `.fairy` 并以绝对路径调用 `fgui_use_project`；多个候选且无法判断时询问用户。不要依赖 Bridge 递归查找 `UIProject`，其目录定位只检查直接 `.fairy` 和固定 `FairyGUI/FairyGUI.fairy`。
-3. 需要唤醒或验证编辑器时调用 `fgui_ping`。不要把“请求已写入队列”当作 FairyGUI 已完成。
+3. 需要唤醒或验证编辑器时调用 `fgui_ping`。Windows 复用必须核对插件当前工程目录、PID、进程启动时间和真实 exe，不凭窗口标题或启动参数判断。身份不明或目标工程存在多个实例时停止调用，要求用户确认目标实例；不要以重复 ping 尝试开窗。慢响应和超时不会启动新实例。
 4. 不知道包名时先 `fgui_list_packages`；不知道资源时用 `fgui_list_items`。
 5. 打开组件后先确认活动文档，再读取对象树。修改优先使用稳定对象 ID，其次对象路径；只有名称唯一时才使用名称。
 
@@ -194,6 +194,7 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
+- `0.8.9` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。

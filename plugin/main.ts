@@ -11,8 +11,8 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.8.8";
-const PROTOCOL_VERSION = "1.0";
+const BRIDGE_VERSION = "0.8.9";
+const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
 const MAX_COMMANDS_PER_POLL = 4;
@@ -25,6 +25,7 @@ interface AgentRequest {
     action?: string;
     params?: any;
     protocolVersion?: string;
+    projectPath?: string;
 }
 
 interface AgentResponse {
@@ -68,6 +69,9 @@ let requestFolder = "";
 let processingFolder = "";
 let responseFolder = "";
 let statusFile = "";
+let instanceStatusFile = "";
+let editorIdentity: { pid: number, startedAt: string } = null;
+let editorIdentityError: string = null;
 let logFile = "";
 let initialized = false;
 let publishInProgress = false;
@@ -928,11 +932,55 @@ function initializeBridge(): boolean {
     if (initialized && queueRoot === nextQueueRoot)
         return true;
 
+    if (initialized)
+        writeOfflineStatus();
     queueRoot = nextQueueRoot;
-    requestFolder = IOPath.Combine(queueRoot, "requests");
-    processingFolder = IOPath.Combine(queueRoot, "processing");
-    responseFolder = IOPath.Combine(queueRoot, "responses");
+    logFile = IOPath.Combine(queueRoot, "bridge.log");
+    ensureDirectory(queueRoot);
+    if (!editorIdentity) {
+        let editorPid: number = null;
+        try {
+            const process = CS.System.Diagnostics.Process.GetCurrentProcess();
+            try {
+                editorPid = Number(process.Id);
+                // 保留 100ns 精度的 UTC 文本；Int64 转 JS Number 会丢失启动时间精度。
+                editorIdentity = { pid: process.Id, startedAt: process.StartTime.ToUniversalTime().ToString("yyyyMMddHHmmssfffffff") };
+            }
+            finally { process.Dispose(); }
+        }
+        catch (error) {
+            // IL2CPP 支持当前 PID，但不支持 Process.StartTime；仅将已知 PID 交给隐藏探针查询。
+            // Puerts 将 .NET char 映射为数字；客户端仍独立核对真实 exe、启动时间及当前工程。
+            try {
+                if ((String(IOPath.DirectorySeparatorChar) !== "\\" && Number(IOPath.DirectorySeparatorChar) !== 92) || !Number.isInteger(editorPid) || editorPid <= 0)
+                    throw error;
+                const probe = IOPath.Combine(App.project.basePath, "plugins", "agent-bridge", "windows-process-identity.ps1");
+                const output = IOPath.Combine(queueRoot, `process-probe-${editorPid}-${Date.now()}.json`);
+                let identity: any;
+                try {
+                    // ProcessUtil.Start 在当前编辑器不返回 stdout；使用专用临时文件传回结果。
+                    FairyEditor.ProcessUtil.Start("powershell.exe", toCsStringArray(["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", probe, "-EditorProcessId", String(editorPid), "-OutputPath", output]), App.project.basePath, true);
+                    identity = JSON.parse(IOFile.ReadAllText(output));
+                }
+                finally { if (IOFile.Exists(output)) IOFile.Delete(output); }
+                if (identity.pid !== editorPid || !/^\d{21}$/.test(identity.startedAt))
+                    throw new Error("身份探针返回无效 PID 或启动时间");
+                editorIdentity = identity;
+                editorIdentityError = null;
+            }
+            catch (probeError) {
+                editorIdentityError = `native: ${error}; probe: ${probeError}`;
+                appendLog(`process identity unavailable: ${editorIdentityError}`);
+            }
+        }
+    }
+
+    const instanceRoot = editorIdentity ? IOPath.Combine(queueRoot, "instances", `${editorIdentity.pid}-${editorIdentity.startedAt}`) : queueRoot;
+    requestFolder = IOPath.Combine(instanceRoot, "requests");
+    processingFolder = IOPath.Combine(instanceRoot, "processing");
+    responseFolder = IOPath.Combine(instanceRoot, "responses");
     statusFile = IOPath.Combine(queueRoot, "status.json");
+    instanceStatusFile = IOPath.Combine(instanceRoot, "status.json");
     logFile = IOPath.Combine(queueRoot, "bridge.log");
 
     ensureDirectory(queueRoot);
@@ -949,7 +997,7 @@ function initializeBridge(): boolean {
 }
 
 function writeJsonAtomic(path: string, data: any): void {
-    const tempPath = `${path}.tmp`;
+    const tempPath = `${path}.${editorIdentity ? editorIdentity.pid : "legacy"}.tmp`;
     IOFile.WriteAllText(tempPath, JSON.stringify(data, null, 2));
     if (IOFile.Exists(path))
         IOFile.Delete(path);
@@ -986,8 +1034,11 @@ function writeStatus(): void {
         return;
 
     const activeDoc = App.activeDoc;
-    writeJsonAtomic(statusFile, {
+    const status = {
         online: true,
+        editorProcessId: editorIdentity ? editorIdentity.pid : null,
+        editorProcessStartedAt: editorIdentity ? editorIdentity.startedAt : null,
+        editorIdentityError,
         bridgeVersion: BRIDGE_VERSION,
         protocolVersion: PROTOCOL_VERSION,
         publishInProgress,
@@ -1041,8 +1092,31 @@ function writeStatus(): void {
             "get_gears", "set_gear", "get_controller_actions", "upsert_controller_action", "remove_controller_action",
             "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"
         ]
-    });
+    };
+    // 每个实例独立写入心跳和队列；旧窗口不能覆盖目标实例的身份或抢走指令。
+    writeJsonAtomic(instanceStatusFile, status);
+    if (instanceStatusFile !== statusFile) {
+        try { writeJsonAtomic(statusFile, status); }
+        catch (_) { /* 根目录状态仅供排障；多个实例的诊断快照竞争不影响实例队列。 */ }
+    }
     lastStatusWrittenMs = Date.now();
+}
+
+function writeOfflineStatus(): void {
+    if (!initialized || !IOFile.Exists(instanceStatusFile))
+        return;
+    const previous = JSON.parse(IOFile.ReadAllText(instanceStatusFile));
+    previous.online = false;
+    previous.timestamp = nowIso();
+    writeJsonAtomic(instanceStatusFile, previous);
+    if (instanceStatusFile !== statusFile) {
+        try {
+            const diagnostic = JSON.parse(IOFile.ReadAllText(statusFile));
+            if (editorIdentity && diagnostic.editorProcessId === editorIdentity.pid)
+                writeJsonAtomic(statusFile, previous);
+        }
+        catch (_) { /* 不覆盖其他实例的诊断状态。 */ }
+    }
 }
 
 function describeProject(): any {
@@ -3463,6 +3537,13 @@ function handleCommand(request: AgentRequest): any {
     const requestProtocol = String(request.protocolVersion || "");
     if (requestProtocol && requestProtocol.split(".")[0] !== PROTOCOL_VERSION.split(".")[0])
         throw new Error(`协议版本不兼容：编辑器 ${PROTOCOL_VERSION}，客户端 ${requestProtocol}`);
+    if (request.projectPath) {
+        const expected = String(IOPath.GetFullPath(request.projectPath)).replace(/[\\/]+$/, "");
+        const actual = App.project && App.project.opened ? String(IOPath.GetFullPath(App.project.basePath)).replace(/[\\/]+$/, "") : "";
+        const windows = String(IOPath.DirectorySeparatorChar) === "\\" || Number(IOPath.DirectorySeparatorChar) === 92;
+        if (windows ? expected.toLowerCase() !== actual.toLowerCase() : expected !== actual)
+            throw new Error("请求目标工程与编辑器当前工程不一致，拒绝执行");
+    }
 
     if (loader3dBusy && ["ping", "get_project", "get_active_document", "list_packages", "list_items"].indexOf(action) < 0)
         verificationError("document_busy", "Loader3D 加载中，请等待当前请求完成", {});
@@ -3910,7 +3991,13 @@ function onUpdate(): void {
     }
 
     if (!App.project || !App.project.opened) {
-        initialized = false;
+        try { writeOfflineStatus(); }
+        finally { initialized = false; }
+        return;
+    }
+
+    if (IOPath.Combine(App.project.basePath, ".agent") !== queueRoot) {
+        initializeBridge();
         return;
     }
 
@@ -3929,7 +4016,8 @@ function onProjectClosed(): void {
     invalidateSpineWaits();
     if (initialized)
         appendLog("project closed");
-    initialized = false;
+    try { writeOfflineStatus(); }
+    finally { initialized = false; }
 }
 
 App.add_onUpdate(onUpdate);
@@ -3954,6 +4042,7 @@ if (pluginInfo) {
         UnityEngine.Application.runInBackground = previousRunInBackground;
         if (initialized)
             appendLog("bridge destroyed");
+        writeOfflineStatus();
     };
 }
 

@@ -18,6 +18,9 @@ declare namespace CS {
     namespace System {
         const Array: any;
         const String: any;
+        namespace Diagnostics {
+            const Process: any;
+        }
 
         namespace IO {
             const Directory: any;
@@ -40,6 +43,7 @@ declare namespace CS {
 
     namespace FairyEditor {
         const App: any;
+        const ProcessUtil: any;
         const ComponentTemplates: any;
         const FObjectType: any;
         const FPackageItemType: any;
