@@ -2,10 +2,11 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.8.9`
+- **版本**：`0.9.0`
 - **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
+- **MCP 工具数**：73；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
 
 > **说明**：Bridge 仓库与业务 FairyGUI 工程分开存放。FairyGUI 工程只需安装轻量插件；在宿主 IDE 中可按需安装 Skill 提高 AI 操作准确率。
 
@@ -304,6 +305,18 @@ uv run fgui-agent preview-transition play fadeIn
 | **动画预览** | `fgui_preview_animation` | 在编辑器中实时播放、暂停、停止、跳帧预览 Transition 或 MovieClip |
 | **保存与事务** | `fgui_get_history`、`fgui_undo`、`fgui_redo`、`fgui_save_document`、`fgui_save_all`、`fgui_discard_document` | 属性与操作撤销/重做、保存文档或放弃全部未保存修改 |
 | **发布** | `fgui_get_publish_settings`、`fgui_publish` | 查询发布设置、执行资源发布（支持活动包/指定包/全部包） |
+| **原生节点** | `fgui_create_object` | 创建 Text/RichText/InputText/Loader/List/Group/Graph |
+| **文本与几何** | `fgui_get_text_style`、`fgui_set_text_style`、`fgui_set_properties`、`fgui_verify_document` | 文本效果与富文本、批量几何属性及保存回读 |
+| **图片九宫格** | `fgui_get_image_settings`、`fgui_set_image_settings` | 读取与修改图片资源缩放、中心矩形和平铺标志 |
+| **按钮绑定** | `fgui_get_button_binding`、`fgui_set_button_binding` | 原生绑定父控制器及页面，设置选中状态 |
+| **列表与滚动** | `fgui_get_list_settings`、`fgui_set_list_settings`、`fgui_get_scroll_settings`、`fgui_set_scroll_settings` | 布局、行列数、间距、滚动方向、分页及分页控制器 |
+| **分组与关系** | `fgui_get_group`、`fgui_set_group`、`fgui_get_relations`、`fgui_add_relation`、`fgui_remove_relation` | 分组成员和原生布局 Relations |
+| **二维 Loader** | `fgui_get_loader`、`fgui_set_loader` | 等比适配、对齐与自动尺寸 |
+
+这些编辑接口只作用于当前文档直属对象；ScrollPane 支持根组件或原生 List。`save=true` 保存整个组件并回读原生 XML；九宫格属于图片资源元数据，会保存整个所属包并影响所有引用。Editor 不保存空分组，创建并保存分组时必须指定 `group_member_ids`。没有完整 Agent 撤销，失败不会自动回滚。
+
+批量几何设置先预检自动尺寸与源尺寸约束，再设置 Pivot/尺寸，最后设置坐标；调用方 JSON 顺序不会改变结果。文本描边/阴影参数需显式启用对应效果。`fgui_list_items` 返回 `{package, items}` 对象；`fgui_verify_document` 支持引用组件省略的默认尺寸和文本效果属性。GearColor 本身已支持描边色，Gear 最终外观仍受自动尺寸、布局和所选控制器页影响。
+
 
 ---
 
@@ -341,7 +354,7 @@ uv run fgui-agent preview-transition play fadeIn
 - **兼容基线**：以 FairyGUI Editor `6.1.4` 为主要验证版本。
 - **动画类型**：支持 FairyGUI 原生 Transition、MovieClip，以及已有包内 Spine 的 Loader3D 属性操作与组件截图；不支持 DragonBones、SWF、外部 Spine 导入或 Unity 运行时换装。
 - **资源管理边界**：暂不支持通用包内资源的任意重命名与跨包移动；MovieClip 删除需带引用校验与 `force=true`。
-- **平台环境**：macOS 已做完整端到端验证；Windows 建议在标准命令提示符/PowerShell 下验证路径格式。
+- **平台环境**：新增原生编辑能力已在 Windows FairyGUI Editor 6.1.4 隔离工程验证；未覆盖所有字体效果、运行预览或业务逻辑场景。
 
 ---
 

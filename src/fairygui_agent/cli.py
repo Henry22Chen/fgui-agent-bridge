@@ -324,6 +324,31 @@ def build_parser() -> argparse.ArgumentParser:
     update_parser.add_argument("--skill-root", help="可选：安装 Skill 的目标仓库根目录")
     update_parser.add_argument("--apply", action="store_true", help="实际写入；省略时仅输出预览")
 
+    for command in ("get-image-settings", "set-image-settings"):
+        p = subparsers.add_parser(command, help="读取/修改图片资源九宫格及缩放；保存作用于整个包")
+        p.add_argument("url")
+        if command.startswith("set-"):
+            p.add_argument("settings", help="JSON 设置对象")
+            p.add_argument("--save", action="store_true")
+    native = subparsers.add_parser("create-object", help="在当前组件创建原生节点，默认不保存")
+    native.add_argument("object_type", choices=["text", "richtext", "inputtext", "loader", "list", "group", "graph"])
+    native.add_argument("--name")
+    for flag, default in (("x", 0), ("y", 0), ("width", 100), ("height", 30)):
+        native.add_argument("--" + flag, type=float, default=default)
+    native.add_argument("--insert-index", type=int)
+    native.add_argument("--group-member-ids", help="JSON 对象 ID 数组；保存分组时必填")
+    native.add_argument("--save", action="store_true")
+    for command in ("set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
+        p = subparsers.add_parser(command, help="读取/编辑当前文档直属对象，默认不保存")
+        _add_target_arguments(p)
+        if command.startswith("set-"):
+            p.add_argument("group_id" if command == "set-group" else "settings", help="分组 ID（空串解除）或 JSON 设置")
+        if command in ("add-relation", "remove-relation"):
+            p.add_argument("relation_type")
+            p.add_argument("--relation-target-id", default="parent")
+            if command == "add-relation": p.add_argument("--use-percent", action="store_true")
+        if not command.startswith("get-"): p.add_argument("--save", action="store_true")
+
     call_parser = subparsers.add_parser("call", help="调试用：调用原始 action")
     call_parser.add_argument("action")
     call_parser.add_argument("--params", default="{}", help="JSON 对象")
@@ -584,6 +609,24 @@ def main() -> int:
         elif args.command == "get-text-style":
             action = "get_text_style"
             params = {"target": target_from_args(args)}
+        elif args.command in ("get-image-settings", "set-image-settings", "create-object", "set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
+            action = args.command.replace("-", "_")
+            if args.command == "create-object":
+                params = {"objectType": args.object_type, "x": args.x, "y": args.y, "width": args.width, "height": args.height, "save": args.save}
+                if args.name is not None: params["name"] = args.name
+                if args.insert_index is not None: params["insertIndex"] = args.insert_index
+                if args.group_member_ids is not None: params["groupMemberIds"] = load_json_value(args.group_member_ids)
+            elif "image-settings" in args.command:
+                params = {"url": args.url}
+            else:
+                params = {"target": target_from_args(args)}
+            if args.command.startswith("set-"):
+                params["save"] = args.save
+                if args.command == "set-group": params["groupId"] = args.group_id
+                else: params["properties" if args.command == "set-properties" else "settings"] = load_json_value(args.settings)
+            elif args.command in ("add-relation", "remove-relation"):
+                params.update(relationType=args.relation_type, relationTargetId=args.relation_target_id, save=args.save)
+                if args.command == "add-relation": params["usePercent"] = args.use_percent
         elif args.command == "get-loader3d":
             action = "get_loader3d"
             params = {"target": target_from_args(args), "includeAssetInfo": not args.no_asset_info}

@@ -113,7 +113,7 @@ def fgui_list_packages() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-def fgui_list_items(package_name: str, item_type: str | None = None) -> list[dict[str, Any]]:
+def fgui_list_items(package_name: str, item_type: str | None = None) -> dict[str, Any]:
     """列出指定包中的资源，可按 FairyGUI 资源类型过滤。"""
     params: dict[str, Any] = {"packageName": package_name}
     if item_type:
@@ -691,6 +691,116 @@ def fgui_verify_document(max_depth: int = 12, object_id: str | None = None, obje
         params["expected"] = expected
     if any((object_id, object_path, object_name)): params["target"] = _target(object_id, object_path, object_name)
     return _client.call("verify_document", params)
+
+
+def _editing_call(action: str, object_id: str | None, object_path: str | None, object_name: str | None, **params: Any) -> dict[str, Any]:
+    return _client.call(action, {"target": _target(object_id, object_path, object_name), **params})
+
+
+@mcp.tool()
+def fgui_get_image_settings(url: str | None = None, package_name: str | None = None, item_name: str | None = None, item_path: str | None = None) -> dict[str, Any]:
+    """读取图片资源缩放方式、九宫格中心矩形及平铺位标志。"""
+    return _client.call("get_image_settings", _resource_target(url, package_name, item_name, item_path))
+
+
+@mcp.tool()
+def fgui_set_image_settings(settings: dict[str, Any], url: str | None = None, package_name: str | None = None, item_name: str | None = None, item_path: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置图片 scaleMode(none/9grid/tile)、scale9Grid({x,y,width,height})、gridTile(0..31)。影响所有引用；save=true 保存整个所属包并回读。"""
+    return _client.call("set_image_settings", {**_resource_target(url, package_name, item_name, item_path), "settings": settings, "save": save})
+
+
+@mcp.tool()
+def fgui_create_object(object_type: str, name: str | None = None, x: float = 0, y: float = 0, width: float = 100, height: float = 30, insert_index: int | None = None, group_member_ids: list[str] | None = None, save: bool = False) -> dict[str, Any]:
+    """在当前文档创建 text/richtext/inputtext/loader/list/group/graph。分组边界由成员决定，save=true 的 group 必须提供 group_member_ids；默认不保存，无完整 Agent 结构撤销。"""
+    params: dict[str, Any] = {"objectType": object_type, "x": x, "y": y, "width": width, "height": height, "save": save}
+    if name is not None: params["name"] = name
+    if insert_index is not None: params["insertIndex"] = insert_index
+    if group_member_ids is not None: params["groupMemberIds"] = group_member_ids
+    return _client.call("create_object", params)
+
+
+@mcp.tool()
+def fgui_set_properties(properties: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """批量设置白名单属性；先处理 Pivot/自动尺寸，再写尺寸，最后写坐标。尺寸与自动尺寸冲突时写入前拒绝；默认不保存。"""
+    return _editing_call("set_properties", object_id, object_path, object_name, properties=properties, save=save)
+
+
+@mcp.tool()
+def fgui_get_button_binding(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取直属 Button 实例的父控制器、页面 ID、选中状态及可用控制器。"""
+    return _editing_call("get_button_binding", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_button_binding(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置 Button 的 controllerName、pageId、selected；空 controllerName 解除绑定。按原生点击行为切换父控制器，默认不保存。"""
+    return _editing_call("set_button_binding", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_list_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取原生 List 布局、行列数、间距、对齐和选择模式。"""
+    return _editing_call("get_list_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_list_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置 List 的 layout、repeatX/repeatY、lineGap/columnGap、align/vAlign、autoResizeItem、selectionMode。分页滚动另用 set_scroll_settings，默认不保存。"""
+    return _editing_call("set_list_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_scroll_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取当前组件根或原生 List 的滚动、分页和分页控制器设置。"""
+    return _editing_call("get_scroll_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_scroll_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置 overflow、scroll、scrollBarDisplay、scrollBarFlags、pageMode、pageControllerName；分页位保留其他滚动标志，默认不保存。"""
+    return _editing_call("set_scroll_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_group(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取直属对象所属 groupId。"""
+    return _editing_call("get_group", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_group(group_id: str, object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置同层分组，空 group_id 解除分组；拒绝跨层引用和循环分组，默认不保存。"""
+    return _editing_call("set_group", object_id, object_path, object_name, groupId=group_id, save=save)
+
+
+@mcp.tool()
+def fgui_get_relations(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取布局关系、百分比标志、继承只读状态和可用关系类型。"""
+    return _editing_call("get_relations", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_add_relation(relation_type: str, relation_target_id: str = "parent", use_percent: bool = False, object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """添加或更新单条关系，如 Center_Center、Bottom_Bottom、Width；目标为 parent 或同层对象 ID。拒绝循环和继承只读关系。"""
+    return _editing_call("add_relation", object_id, object_path, object_name, relationType=relation_type, relationTargetId=relation_target_id, usePercent=use_percent, save=save)
+
+
+@mcp.tool()
+def fgui_remove_relation(relation_type: str, relation_target_id: str = "parent", object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """删除指定目标的单条关系，保留同目标其余关系，默认不保存。"""
+    return _editing_call("remove_relation", object_id, object_path, object_name, relationType=relation_type, relationTargetId=relation_target_id, save=save)
+
+
+@mcp.tool()
+def fgui_get_loader(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取二维 Loader 的 fill、对齐、自动尺寸和缩小约束。"""
+    return _editing_call("get_loader", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_loader(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置二维 Loader 的 fill、align/vAlign、autoSize、shrinkOnly、useResize；不修改资源引用，默认不保存。"""
+    return _editing_call("set_loader", object_id, object_path, object_name, settings=settings, save=save)
 
 
 @mcp.tool()

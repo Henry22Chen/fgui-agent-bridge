@@ -48,13 +48,17 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 ### 2. 创建、修改和保存
 
 - 新建组件使用 `fgui_create_component`，明确包、目录、名称、宽高、导出状态和冲突策略。
+- 原生 Text/RichText/InputText/Loader/List/Group/Graph 使用 `fgui_create_object`，创建到当前文档根下。保存分组必须传 `group_member_ids`，分组边界由成员决定；默认不保存，无完整结构撤销。
 - 图片、字体与声音导入使用绝对本地路径（`fgui_import_image` / `fgui_import_font` / `fgui_import_sound`）；`replace` 是磁盘覆盖，不能由文档放弃回滚。
 - 动画编辑先用 `fgui_list_transitions` / `fgui_get_transition` 读取，再用 `fgui_upsert_transition` 进行整段声明式更新，或用关键帧原子工具局部修改；时间单位是 frame。全部原生 Transition 轨道均使用类型化 JSON。
 - MovieClip 用 `fgui_create_movieclip` 的有序绝对图片路径创建，或通过 `fgui_update_movieclip` 更新帧与播放参数；帧由 FairyGUI 嵌入 `.jta`，不会自动生成逐帧图片 `ui://` 资源。已有 MovieClip 更新/替换可 Agent undo/redo，全新创建和删除不可逆。
 - 用 `fgui_preview_animation` 播放、暂停、停止、跳帧或查询 Transition/MovieClip 预览状态。预览不保存，不能把预览状态描述为资源默认属性。
 - 按钮状态图顺序固定为 `up/down/over/selectedOver/disabled/selectedDisabled`，非空值必须是工程内图片 `ui://` URL。
 - 资源替换：替换显示对象引用的资源使用 `fgui_replace_object_resource`（当前仅支持 Image 与 Loader，不支持 Button 状态资源切换），支持传入 `expected_type` 校验并在 `--save` 时验证 Editor/XML 持久化。
-- 文本样式：文本对象的样式读取与修改优先使用 `fgui_get_text_style` 和 `fgui_set_text_style`（支持 `fontSize`、`color`、`strokeColor`、`shadowColor`、`lineGap`、`letterSpacing`、`align`、`vAlign`、`autoSize` 等白名单属性），并提供回读验证；暂不支持自动 external reload。
+- 文本样式：使用 `fgui_get_text_style` / `fgui_set_text_style` 编辑字体、颜色、描边/阴影开关及参数、粗体/斜体/下划线、UBB、文本、对齐、间距和自动尺寸。描边/阴影参数需启用对应效果；显式尺寸与自动尺寸冲突时先拒绝。批量几何属性用 `fgui_set_properties`，先设置 Pivot/尺寸、最后写坐标，避免 JSON 顺序引发位移；暂不支持自动 external reload。
+- 图片缩放与九宫格用 `fgui_get_image_settings` / `fgui_set_image_settings`；这是影响所有引用的包级设置，`save=true` 保存整个所属包并回读，不等同于组件保存。
+- 按钮与父控制器的原生绑定用 `fgui_get_button_binding` / `fgui_set_button_binding`；List 布局用 `fgui_get_list_settings` / `fgui_set_list_settings`，ScrollPane 分页和控制器用 `fgui_get_scroll_settings` / `fgui_set_scroll_settings`。二维 Loader 布局用 `fgui_get_loader` / `fgui_set_loader`。
+- 分组成员用 `fgui_get_group` / `fgui_set_group`，空 ID 解除分组；布局关系用 `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation`。只改当前文档直属对象及同层/父级引用，拒绝循环和继承只读关系；默认不保存，`save=true` 保存整个组件并核对原生 XML。
 - Spine：先 `fgui_get_loader3d` 再 `fgui_set_loader3d`；仅编辑直属 Loader3D 的已有包内资源。导入后的修复用 `fgui_fix_spine_anchor`；绑定/插入时默认修复，包保存边界见下文。
 - 状态编辑：先读取 `fgui_get_controllers` / `fgui_get_gears` / `fgui_get_controller_actions`，再编辑页面、Gear 或联动。页面优先用稳定 ID；Gear set 完整替换单个 Gear，Action upsert 省略索引为追加、指定索引为完整替换单条，增删后重读索引。作用于当前根控制器或直属对象；联动可引用直属子组件，不写子组件资源。具体格式见能力参考。
 - 属性修改（如 `text`、`icon`、`font` 等白名单属性）进入 Agent 属性事务栈；结构创建、插入和删除没有完整结构快照撤销。
@@ -194,13 +198,14 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
-- `0.8.9` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
+- `0.9.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。
 - MovieClip 删除即使传 `force=true` 也会执行引用检查；仍被组件使用时必须先移除引用。
 - `replace_object_resource` 本轮仅允许 Image 与 Loader，拒绝 Button `state` 替换，避免误将整个按钮组件替换为单一资源。
 - 文本样式修改支持类型与枚举检查，暂不支持自动 external reload。
+- 新原生节点、批量属性、按钮绑定、List/ScrollPane、二维 Loader、分组与 Relations 不提供完整 Agent 撤销，实际修改清除旧历史并保持 dirty。无变化且不保存时保留历史；拒绝的输入不会作为成功写入。不要将控件配置验证等同于运行预览点击、滚动或业务逻辑联调。
 - `verify_document` 可传入 `target + expected` 执行磁盘 XML 持久化比对，失败响应保留结构化 `error.details`（包含 `stage`、expected、actual、differences）。
 - Loader3D、Controller、Gear 和联动默认不保存，实际修改清空旧 Agent 历史，无完整撤销；`save=true` 保存整个组件并回读 XML，写入失败按实际响应报告，不假装已回滚。Controller 页面/控制器删除仍未开放。
 - SpineFixer 仅支持已验证的 Spine 4.2 二进制；绑定资源或插入 Spine 默认修复尺寸、锚点和 PMA 并保存所属包，独立于组件 `save=false`，不能由文档 undo/discard 回退。可显式 `fix_spine=false`；查询、截图和仅调整播放属性不修复。

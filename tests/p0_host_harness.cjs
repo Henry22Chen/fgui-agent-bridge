@@ -35,6 +35,8 @@ function setup() {
  ctx=vm.createContext({exports:{},CS:{FairyEditor:{App:app,FPackageItemType:{IMAGE:'image',FONT:'font'}},UnityEngine:{Application:{runInBackground:false},Color},System:{IO:{File:{Exists:p=>p in files,ReadAllText:p=>files[p]},Directory:{},Path:{},FileInfo:{},SearchOption:{}}},FairyGUI:{Utils:{XML}}},require:()=>({}),console});
  const code=fs.readFileSync(path.join(root,'plugin/main.js'),'utf8').split('App.add_onUpdate(onUpdate);')[0];
  vm.runInContext(code,ctx);
+ doc.content.numChildren=objects.length;
+ doc.content.GetChildAt=i=>objects[i];
  ctx.getActiveDocument=()=>doc;
  ctx.resolveObject=(_,t)=>{const o=objects.find(o=>o.id===t.id);if(!o)throw Error('未找到对象 ID');return o;};
  ctx.describeObject=o=>({id:o.id});ctx.describeDocument=()=>({modified:doc.isModified});

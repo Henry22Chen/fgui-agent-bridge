@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.8.9";
+const BRIDGE_VERSION = "0.9.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1228,7 +1228,10 @@ function writeStatus() {
             "verify_document", "replace_object_resource", "get_text_style", "set_text_style",
             "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor",
             "get_gears", "set_gear", "get_controller_actions", "upsert_controller_action", "remove_controller_action",
-            "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"
+            "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page",
+            "get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
+            "get_list_settings", "set_list_settings", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
+            "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
         ]
     };
     // 每个实例独立写入心跳和队列；旧窗口不能覆盖目标实例的身份或抢走指令。
@@ -1868,7 +1871,10 @@ function targetSummary(obj, target) {
     return { id: obj.id || null, name: obj.name || null, path: target && target.path ? String(target.path) : null, type: String(obj.objectType || "unknown") };
 }
 // Verification is deliberately limited to properties with a known serialized meaning.
-const VERIFIED_TEXT_KEYS = ["font", "fontSize", "color", "align", "vAlign", "autoSize", "lineGap", "letterSpacing", "width", "height", "x", "y"];
+const TEXT_BOOLEAN_KEYS = ["bold", "italic", "underline", "strike", "stroke", "shadow", "ubbEnabled", "varsEnabled", "singleLine"];
+const TEXT_COLOR_KEYS = ["color", "strokeColor", "shadowColor"];
+const VERIFIED_TEXT_KEYS = ["font", "fontSize", "color", "align", "vAlign", "autoSize", "lineGap", "letterSpacing", "width", "height", "x", "y",
+    "text", "strokeColor", "strokeSize", "shadowColor", "shadowX", "shadowY", "outlineSoftness", "underlaySoftness", "faceDilate"].concat(TEXT_BOOLEAN_KEYS);
 const VERIFIED_KEYS = ["id", "name", "type", "resourceURL"].concat(VERIFIED_TEXT_KEYS, ["animationName", "skinName", "playing", "loop", "frame"]);
 function verificationError(code, message, details) {
     const error = new Error(message);
@@ -1884,11 +1890,11 @@ function validateExpectations(expected) {
         if (VERIFIED_KEYS.indexOf(key) < 0)
             verificationError("unsupported_property", `不支持验证属性：${key}`, { stage: "input", property: key });
         const value = expected[key];
-        if (value !== null && typeof value !== "string" && typeof value !== "number" && !((key === "playing" || key === "loop") && typeof value === "boolean"))
+        if (value !== null && typeof value !== "string" && typeof value !== "number" && !((["playing", "loop"].concat(TEXT_BOOLEAN_KEYS)).indexOf(key) >= 0 && typeof value === "boolean"))
             verificationError("invalid_argument", `expected.${key} 必须是字符串、数字或 null`, { stage: "input" });
         if (typeof value === "number" && !Number.isFinite(value))
             verificationError("invalid_argument", `expected.${key} 必须是有限数字`, { stage: "input" });
-        result[key] = key === "color" ? normalizedColor(value, "color") : value;
+        result[key] = TEXT_COLOR_KEYS.indexOf(key) >= 0 ? normalizedColor(value, key) : value;
     }
     return result;
 }
@@ -1897,7 +1903,7 @@ function verifiedObjectValues(obj) {
     const aliases = { vAlign: "verticalAlign", lineGap: "leading" };
     for (const key of VERIFIED_TEXT_KEYS) {
         const property = aliases[key] || key;
-        value[key] = key === "color" ? colorHex(obj.color) : (obj[property] === undefined ? null : safeValue(obj[property]));
+        value[key] = TEXT_COLOR_KEYS.indexOf(key) >= 0 ? colorHex(obj[key]) : (obj[property] === undefined ? null : safeValue(obj[property]));
     }
     // An unspecified/default font is represented by the empty string in XML.
     if (String(obj.objectType).toLowerCase() === "loader3d") {
@@ -1965,6 +1971,12 @@ function persistedObjectValues(doc, obj) {
         value[key] = attr(key);
     value.font = value.font || "";
     value.lineGap = attr("leading");
+    if (String(node.name).toLowerCase().indexOf("text") >= 0) {
+        const textDefaults = { color: "#000000", align: "left", vAlign: "top", autoSize: "both", letterSpacing: "0", lineGap: "0" };
+        for (const key of Object.keys(textDefaults))
+            if (value[key] === null)
+                value[key] = textDefaults[key];
+    }
     if (value.color !== null)
         value.color = normalizedColor(value.color, "XML color");
     for (const key of ["fontSize", "letterSpacing", "lineGap"])
@@ -1974,8 +1986,8 @@ function persistedObjectValues(doc, obj) {
     value.x = xy[0];
     value.y = xy[1];
     let size = attr("size");
-    // Image size may be omitted when it equals the referenced resource's dimensions.
-    if (!size && value.type === "image" && value.resourceURL) {
+    // 组件实例与图片都会省略等于引用资源默认值的尺寸，必须按资源引用解析而非使用当前内存尺寸。
+    if (!size && ["image", "component"].indexOf(value.type) >= 0 && value.resourceURL) {
         const resource = App.project.GetItemByURL(value.resourceURL);
         if (resource)
             size = `${resource.width},${resource.height}`;
@@ -1983,6 +1995,24 @@ function persistedObjectValues(doc, obj) {
     const dimensions = size ? size.split(",").map(Number) : [null, null];
     value.width = dimensions[0];
     value.height = dimensions[1];
+    const defaults = { bold: false, italic: false, underline: false, strike: false, stroke: false, shadow: false,
+        ubbEnabled: false, varsEnabled: false, singleLine: false, strokeColor: "#000000", shadowColor: "#000000", strokeSize: 1,
+        shadowX: 1, shadowY: 1, outlineSoftness: 0, underlaySoftness: 0, faceDilate: 0, text: "" };
+    for (const key of Object.keys(defaults)) {
+        let raw = attr(key === "ubbEnabled" ? "ubb" : key === "varsEnabled" ? "vars" : key);
+        if (key === "stroke")
+            raw = attr("strokeColor") !== null ? "true" : "false";
+        if (key === "shadow")
+            raw = attr("shadowColor") !== null ? "true" : "false";
+        value[key] = raw === null ? defaults[key] : typeof defaults[key] === "boolean" ? raw === "true"
+            : typeof defaults[key] === "number" ? Number(raw) : TEXT_COLOR_KEYS.indexOf(key) >= 0 ? normalizedColor(raw, key) : raw;
+    }
+    const shadowOffset = attr("shadowOffset");
+    if (shadowOffset) {
+        const offset = shadowOffset.split(",").map(Number);
+        value.shadowX = offset[0];
+        value.shadowY = offset[1];
+    }
     return { values: value, file: String(item.file) };
 }
 function verifyObject(doc, obj, expected, readXml) {
@@ -2071,21 +2101,13 @@ function colorHex(value) {
     return `#${hex(channel(c.r))}${hex(channel(c.g))}${hex(channel(c.b))}${alpha < 255 ? hex(alpha) : ""}`.toUpperCase();
 }
 function textStyle(obj) {
-    const value = {};
-    ["font", "fontSize", "align", "verticalAlign", "autoSize", "lineSpacing", "letterSpacing", "stroke", "shadow", "width", "height"].forEach(k => { if (obj[k] !== undefined)
-        value[k] = obj[k]; });
-    if (obj.leading !== undefined)
-        value.lineGap = Number(obj.leading);
-    if (obj.verticalAlign !== undefined)
-        value.vAlign = String(obj.verticalAlign);
-    if (obj.color !== undefined)
-        value.color = colorHex(obj.color);
-    if (obj.strokeColor !== undefined)
-        value.strokeColor = colorHex(obj.strokeColor);
-    if (obj.shadowColor !== undefined)
-        value.shadowColor = colorHex(obj.shadowColor);
+    const value = {}, all = verifiedObjectValues(obj);
+    for (const key of VERIFIED_TEXT_KEYS)
+        if (obj[TEXT_ALIASES[key] || key] !== undefined)
+            value[key] = all[key];
     return value;
 }
+const TEXT_ALIASES = { vAlign: "verticalAlign", lineGap: "leading" };
 function getTextStyle(params) {
     const doc = getActiveDocument();
     const obj = resolveObject(doc, params.target);
@@ -2111,6 +2133,13 @@ function setTextStyle(params) {
                 verificationError("invalid_argument", `${key} 必须是数字`, { stage: "input" });
             numberValue(style[key], key, ["fontSize", "width", "height"].indexOf(key) >= 0 ? 0 : -10000, 10000);
         }
+        else if (TEXT_BOOLEAN_KEYS.indexOf(key) >= 0) {
+            if (typeof style[key] !== "boolean")
+                verificationError("invalid_argument", `${key} 必须是布尔值`, { stage: "input" });
+        }
+        else if (["strokeSize", "shadowX", "shadowY", "outlineSoftness", "underlaySoftness", "faceDilate"].indexOf(key) >= 0) {
+            numberValue(style[key], key, ["shadowX", "shadowY", "faceDilate"].indexOf(key) >= 0 ? -10000 : 0, 10000);
+        }
         else if (typeof style[key] !== "string")
             verificationError("invalid_argument", `${key} 必须是字符串`, { stage: "input" });
     }
@@ -2125,9 +2154,19 @@ function setTextStyle(params) {
         style.font = String(font.GetURL());
     }
     const before = textStyle(obj);
-    const aliases = { vAlign: "verticalAlign", lineGap: "leading" };
-    for (const key of Object.keys(style))
-        obj[aliases[key] || key] = key === "color" ? unityColor(style[key], "color") : style[key];
+    requireOwnedEditingTarget(doc, obj, false);
+    validateGeometry(obj, style);
+    for (const effect of ["stroke", "shadow"]) {
+        const enabled = style[effect] === undefined ? Boolean(obj[effect]) : style[effect];
+        const keys = effect === "stroke" ? ["strokeColor", "strokeSize"] : ["shadowColor", "shadowX", "shadowY"];
+        if (!enabled && keys.some(k => style[k] !== undefined))
+            verificationError("layout_conflict", `设置 ${effect} 参数时必须同时启用 ${effect}=true`, { stage: "input" });
+    }
+    // 自动尺寸与文本先应用，尺寸忽略 Pivot 位移，坐标最后写入，避免调用方 JSON 键顺序改变结果。
+    invalidateUntrackedHistory(doc);
+    for (const key of Object.keys(style).filter(k => ["x", "y", "width", "height"].indexOf(k) < 0))
+        obj[TEXT_ALIASES[key] || key] = TEXT_COLOR_KEYS.indexOf(key) >= 0 ? unityColor(style[key], key) : style[key];
+    applyGeometry(obj, style);
     doc.SetModified(true);
     doc.RefreshInspectors();
     const expected = Object.assign({ id: obj.id, type }, style);
@@ -3517,6 +3556,427 @@ async function publishPackages(params) {
         writeStatus();
     }
 }
+/** 直属对象属于当前组件文档；嵌套组件的定义须先打开其所属文档再编辑。 */
+function requireOwnedEditingTarget(doc, obj, allowRoot) {
+    if (allowRoot && obj === doc.content)
+        return;
+    for (let i = 0; i < doc.content.numChildren; i++)
+        if (doc.content.GetChildAt(i) === obj)
+            return;
+    verificationError("nested_target", "请打开对象所属组件，只能修改当前文档直属对象", {});
+}
+function editingTarget(params, types = [], allowRoot = false) {
+    const doc = getActiveDocument(), obj = resolveObject(doc, params.target);
+    requireOwnedEditingTarget(doc, obj, allowRoot);
+    if (types.length && types.indexOf(String(obj.objectType).toLowerCase()) < 0)
+        verificationError("wrong_object_type", `目标类型必须为 ${types.join("/")}`, { target: targetSummary(obj, params.target) });
+    return obj;
+}
+function componentXmlNode(doc, obj) {
+    const item = App.project.GetItemByURL(doc.content.resourceURL);
+    if (!item || !item.file || !IOFile.Exists(item.file))
+        throw new Error("无法读取组件 XML");
+    const root = new CS.FairyGUI.Utils.XML(String(IOFile.ReadAllText(item.file)));
+    if (obj === doc.content)
+        return root;
+    const list = root.GetNode("displayList"), matches = [];
+    if (list)
+        for (let i = 0; i < list.elements.Count; i++) {
+            const node = list.elements.get_Item(i);
+            if (String(node.GetAttribute("id")) === String(obj.id))
+                matches.push(node);
+        }
+    if (matches.length !== 1)
+        throw new Error("组件 XML 对象不存在或 ID 不唯一");
+    return matches[0];
+}
+/** 以 Editor 自己的序列化快照比对保存结果，保留默认省略、扩展节点和未编辑设置的语义。 */
+function finishEditingWrite(doc, obj, before, after, params, changed) {
+    let saved = false, persisted = false;
+    if (params.save === true) {
+        try {
+            const expected = gearXmlData(obj.Write());
+            doc.Save();
+            if (doc.isModified)
+                throw new Error("保存后组件仍有未保存修改");
+            saved = true;
+            if (!valuesEqual(expected, gearXmlData(componentXmlNode(doc, obj))))
+                throw new Error("磁盘 XML 与 Editor 序列化快照不一致");
+            persisted = true;
+            clearAgentHistory();
+            untrackedDocumentVersions.delete(doc);
+        }
+        catch (error) {
+            verificationError("persistence_failed", String(error), { before, after, saved, mutationMayHaveOccurred: changed, rollbackAttempted: false });
+        }
+    }
+    return { target: targetSummary(obj, params.target), before, after, changed, saved, persisted,
+        documentModified: Boolean(doc.isModified), agentUndoSupported: false, externalReload: false,
+        note: "save=true 保存整个当前组件；无完整 Agent 事务撤销，失败不自动回滚。" };
+}
+function editObjectSettings(doc, obj, params, read, patch, apply) {
+    if (params.save !== undefined && typeof params.save !== "boolean")
+        throw new Error("save 必须是布尔值");
+    const equal = (a, b) => typeof a === "number" && typeof b === "number" ? Math.abs(a - b) <= 0.00001 : valuesEqual(a, b);
+    const before = read(), changed = !patch || Object.keys(patch).some(k => !equal(before[k], patch[k]));
+    if (changed) {
+        invalidateUntrackedHistory(doc);
+        try {
+            apply();
+            const after = read();
+            if (patch && Object.keys(patch).some(k => !equal(after[k], patch[k])))
+                throw new Error("Editor 未接受全部设置，请检查自动尺寸、分组、控制器及布局约束");
+            doc.RefreshInspectors();
+        }
+        catch (error) {
+            verificationError("editor_rejected", String(error), { before, after: read(), mutationMayHaveOccurred: true, rollbackAttempted: false });
+        }
+    }
+    return finishEditingWrite(doc, obj, before, read(), params, changed);
+}
+function checkedSettings(value, spec) {
+    assertKnownKeys(value, Object.keys(spec), "settings");
+    if (!Object.keys(value).length)
+        throw new Error("settings 必须包含至少一个属性");
+    const result = {};
+    for (const key of Object.keys(value)) {
+        const rule = spec[key], v = value[key];
+        if (Array.isArray(rule)) {
+            if (rule.indexOf(v) < 0)
+                throw new Error(`${key} 只能为 ${rule.join(", ")}`);
+        }
+        else if (rule === "boolean" || rule === "string") {
+            if (typeof v !== rule)
+                throw new Error(`${key} 必须是 ${rule}`);
+        }
+        else {
+            numberValue(v, key, rule === "nonnegative" || rule === "int" ? 0 : -1000000, 1000000);
+            if (rule === "int" && !Number.isInteger(v))
+                throw new Error(`${key} 必须是非负整数`);
+        }
+        result[key] = v;
+    }
+    return result;
+}
+/** 显式尺寸与自动尺寸不能同时作保证；冲突在任何写操作前拒绝。 */
+function validateGeometry(obj, patch) {
+    const auto = patch.autoSize === undefined ? obj.autoSize : patch.autoSize;
+    if ((patch.width !== undefined || patch.height !== undefined) && (auto === true || auto === "both"
+        || (auto === "height" && patch.height !== undefined)))
+        verificationError("layout_conflict", "显式尺寸与自动尺寸冲突，请同时设置 autoSize=none（文本）或 false（Loader）", { stage: "input" });
+    if ((patch.width !== undefined || patch.height !== undefined) && (patch.useSourceSize === undefined ? obj.useSourceSize : patch.useSourceSize))
+        verificationError("layout_conflict", "显式尺寸要求 useSourceSize=false", { stage: "input" });
+}
+function applyGeometry(obj, patch) {
+    if (patch.pivotX !== undefined || patch.pivotY !== undefined || patch.anchor !== undefined)
+        obj.SetPivot(patch.pivotX === undefined ? obj.pivotX : patch.pivotX, patch.pivotY === undefined ? obj.pivotY : patch.pivotY, patch.anchor === undefined ? obj.anchor : patch.anchor);
+    if (patch.width !== undefined || patch.height !== undefined)
+        obj.SetSize(patch.width === undefined ? obj.width : patch.width, patch.height === undefined ? obj.height : patch.height, true);
+    if (patch.x !== undefined || patch.y !== undefined)
+        obj.SetXY(patch.x === undefined ? obj.x : patch.x, patch.y === undefined ? obj.y : patch.y);
+}
+function setProperties(params) {
+    const doc = getActiveDocument(), obj = editingTarget(params, [], true);
+    const spec = {};
+    for (const k of Object.keys(writableProperties))
+        spec[k] = ["visible", "touchable", "opaque", "grayed", "enabled", "locked", "hideByEditor", "anchor", "useSourceSize"].indexOf(k) >= 0 ? "boolean"
+            : ["name", "text", "icon", "font", "tooltips", "blendMode", "customData", "notes"].indexOf(k) >= 0 ? "string"
+                : ["width", "height"].indexOf(k) >= 0 ? "nonnegative" : "number";
+    const text = String(obj.objectType).toLowerCase().indexOf("text") >= 0;
+    if (obj.autoSize !== undefined)
+        spec.autoSize = text ? ["none", "both", "height", "shrink"] : "boolean";
+    const patch = checkedSettings(params.properties, spec);
+    for (const k of Object.keys(patch))
+        if (obj[k] === undefined)
+            verificationError("unsupported_property", `目标对象没有可持久化属性：${k}`, { stage: "input" });
+    Object.keys(patch).forEach(k => validatePropertyTarget(doc, obj, k));
+    validateGeometry(obj, patch);
+    const geometry = ["x", "y", "width", "height", "pivotX", "pivotY", "anchor"];
+    const read = () => { const v = {}; Object.keys(patch).forEach(k => v[k] = safeValue(obj[k])); return v; };
+    return editObjectSettings(doc, obj, params, read, patch, () => {
+        for (const k of Object.keys(patch).filter(k => geometry.indexOf(k) < 0))
+            obj[k] = patch[k];
+        applyGeometry(obj, patch);
+    });
+}
+function createObject(params) {
+    const doc = getActiveDocument(), type = String(params.objectType || "").toLowerCase();
+    if (["text", "richtext", "inputtext", "loader", "list", "group", "graph"].indexOf(type) < 0)
+        throw new Error("不支持此原生节点类型");
+    const name = params.name === undefined ? "" : String(params.name).trim();
+    if (name && /[\/\x00-\x1f]/.test(name))
+        throw new Error("节点名称不能包含路径分隔符或控制字符");
+    for (let i = 0; name && i < doc.content.numChildren; i++)
+        if (doc.content.GetChildAt(i).name === name)
+            throw new Error("同层节点名称已存在");
+    const x = params.x === undefined ? 0 : numberValue(params.x, "x"), y = params.y === undefined ? 0 : numberValue(params.y, "y");
+    const width = params.width === undefined ? 100 : numberValue(params.width, "width", 0), height = params.height === undefined ? 30 : numberValue(params.height, "height", 0);
+    const index = params.insertIndex === undefined ? -1 : numberValue(params.insertIndex, "insertIndex", -1, doc.content.numChildren);
+    if (!Number.isInteger(index))
+        throw new Error("insertIndex 必须是整数");
+    const memberIds = params.groupMemberIds === undefined ? [] : params.groupMemberIds;
+    if (!Array.isArray(memberIds) || memberIds.some(id => typeof id !== "string") || new Set(memberIds).size !== memberIds.length)
+        throw new Error("groupMemberIds 必须是不重复的对象 ID 数组");
+    if (memberIds.length && type !== "group")
+        throw new Error("groupMemberIds 仅适用于分组");
+    const members = memberIds.map(id => editingTarget({ target: { id } }));
+    // Editor 不序列化空分组；显式保存时须一次提供成员，避免声称创建成功但重开丢失。
+    if (type === "group" && params.save === true && !members.length)
+        verificationError("empty_group", "空分组不能持久化，请提供 groupMemberIds 或先不保存再添加成员", { stage: "input" });
+    invalidateUntrackedHistory(doc);
+    let obj;
+    try {
+        // 使用 Document 原生插入入口，统一生成对象 ID、文档元素和编辑器层级。
+        obj = doc.InsertObject(type, new UnityEngine.Vector2(x, y), index);
+        if (!obj || String(obj.objectType).toLowerCase() !== type)
+            throw new Error("Editor 未创建目标节点类型");
+        if (name)
+            obj.name = name;
+        if (obj.autoSize !== undefined)
+            obj.autoSize = type.indexOf("text") >= 0 ? "none" : false;
+        if (obj.useSourceSize)
+            obj.useSourceSize = false;
+        if (type === "group") {
+            members.forEach(member => member.groupId = obj.id);
+            obj.UpdateImmdediately(); // 分组位置和尺寸由成员边界决定，不拉伸用户成员以满足默认创建尺寸。
+        }
+        else
+            applyGeometry(obj, { width, height, x, y });
+        doc.RefreshInspectors();
+    }
+    catch (error) {
+        verificationError("editor_rejected", String(error), { createdObjectId: obj ? obj.id : null, mutationMayHaveOccurred: true });
+    }
+    return finishEditingWrite(doc, obj, null, describeObject(obj, 0, 0), params, true);
+}
+function imageSettings(item) {
+    if (item.type !== FairyEditor.FPackageItemType.IMAGE)
+        throw new Error("目标必须是图片资源");
+    const asset = item.GetAsset(), grid = asset.scale9Grid;
+    return { resourceURL: item.GetURL(), width: item.width, height: item.height, scaleMode: asset.scaleOption || "none",
+        scale9Grid: { x: grid.x, y: grid.y, width: grid.width, height: grid.height }, gridTile: asset.gridTile };
+}
+function setImageSettings(params) {
+    const item = resolveItem(params), before = imageSettings(item), asset = item.GetAsset();
+    assertKnownKeys(params.settings, ["scaleMode", "scale9Grid", "gridTile"], "settings");
+    if (!Object.keys(params.settings).length)
+        throw new Error("settings 不能为空");
+    const expected = { ...before, ...params.settings }, modes = ["none", FairyEditor.ImageAsset.SCALE_9GRID, FairyEditor.ImageAsset.SCALE_TILE];
+    if (modes.indexOf(expected.scaleMode) < 0)
+        throw new Error("scaleMode 必须为 none/9grid/tile");
+    if (params.settings.scale9Grid !== undefined || expected.scaleMode === modes[1]) {
+        if (expected.scaleMode !== modes[1])
+            throw new Error("scale9Grid 仅能用于 9grid 缩放");
+        const g = checkedSettings(expected.scale9Grid, { x: "int", y: "int", width: "int", height: "int" });
+        if (Object.keys(g).length !== 4 || g.width <= 0 || g.height <= 0 || g.x + g.width > item.width || g.y + g.height > item.height)
+            throw new Error("九宫格中心矩形必须为图片原始尺寸内的正整数矩形");
+        expected.scale9Grid = { x: g.x, y: g.y, width: g.width, height: g.height };
+    }
+    if (!Number.isInteger(expected.gridTile) || expected.gridTile < 0 || expected.gridTile > 31)
+        throw new Error("gridTile 必须为 0..31 的位标志");
+    const changed = !valuesEqual(before, expected);
+    if (changed) {
+        clearAgentHistory();
+        asset.scaleOption = expected.scaleMode === "none" ? "" : expected.scaleMode;
+        if (params.settings.scale9Grid !== undefined)
+            asset.scale9Grid = new UnityEngine.Rect(expected.scale9Grid.x, expected.scale9Grid.y, expected.scale9Grid.width, expected.scale9Grid.height);
+        asset.gridTile = expected.gridTile;
+        item.SetChanged();
+    }
+    const after = imageSettings(item);
+    if (!valuesEqual(after, expected))
+        verificationError("editor_rejected", "图片设置回读不一致", { before, after, expected, mutationMayHaveOccurred: changed });
+    let saved = false, persisted = false;
+    if (params.save === true) {
+        try {
+            const Xml = CS.FairyGUI.Utils.XML, native = Xml.Create("image");
+            asset.WriteSettings(native, false);
+            item.owner.Save();
+            saved = true;
+            const xml = new Xml(String(IOFile.ReadAllText(IOPath.Combine(item.owner.basePath, "package.xml")))), resources = xml.GetNode("resources");
+            let found = null;
+            for (let i = 0; resources && i < resources.elements.Count; i++) {
+                const n = resources.elements.get_Item(i);
+                if (String(n.GetAttribute("id")) === String(item.id)) {
+                    if (found)
+                        throw new Error("图片 ID 不唯一");
+                    found = n;
+                }
+            }
+            if (!found)
+                throw new Error("package.xml 没有目标图片");
+            for (const k of Array.from(new Set(["scale", "scale9grid", "gridTile"].concat(Object.keys(gearXmlData(native).attrs)))))
+                if (String(native.GetAttribute(k) || "") !== String(found.GetAttribute(k) || ""))
+                    throw new Error(`图片 ${k} 未持久化`);
+            persisted = true;
+        }
+        catch (error) {
+            verificationError("persistence_failed", String(error), { before, after, saved, mutationMayHaveOccurred: changed });
+        }
+    }
+    return { before, after, changed, saved, persisted, diskWrite: saved, agentUndoSupported: false, scope: "package",
+        note: "修改图片资源的包级元数据，影响所有引用；save=true 保存所属整个包，不受组件 save 控制。" };
+}
+function buttonBinding(obj) {
+    const b = obj.extention;
+    if (!b || String(obj.extentionId).toLowerCase() !== "button")
+        throw new Error("目标必须是 Button 组件实例");
+    return { controllerName: b.controller || "", pageId: b.page || "", selected: Boolean(b.selected) };
+}
+function setButtonBinding(params) {
+    const doc = getActiveDocument(), obj = editingTarget(params, ["component"]), before = buttonBinding(obj);
+    const patch = checkedSettings(params.settings, { controllerName: "string", pageId: "string", selected: "boolean" });
+    const next = { ...before, ...patch };
+    if (next.controllerName) {
+        const c = resolveController(doc, next.controllerName);
+        resolveControllerPage(c, { pageId: next.pageId });
+    }
+    else {
+        if (patch.pageId)
+            throw new Error("清除控制器时不能指定页面");
+        patch.pageId = "";
+    }
+    return editObjectSettings(doc, obj, params, () => buttonBinding(obj), patch, () => {
+        const b = obj.extention;
+        if (patch.controllerName !== undefined)
+            b.controller = patch.controllerName;
+        if (patch.pageId !== undefined)
+            b.page = patch.pageId;
+        if (patch.selected !== undefined)
+            b.selected = patch.selected;
+    });
+}
+const LIST_SETTING_SPEC = { layout: ["column", "row", "flow_hz", "flow_vt", "pagination"], repeatX: "int", repeatY: "int", lineGap: "number", columnGap: "number",
+    align: ["left", "center", "right"], vAlign: ["top", "middle", "bottom"], autoResizeItem: "boolean", selectionMode: ["single", "multiple", "multipleSingleClick", "none"] };
+const LOADER_SETTING_SPEC = { fill: ["none", "scale", "scaleMatchHeight", "scaleMatchWidth", "scaleFree", "scaleNoBorder"], align: ["left", "center", "right"],
+    vAlign: ["top", "middle", "bottom"], autoSize: "boolean", shrinkOnly: "boolean", useResize: "boolean" };
+function readSimpleSettings(obj, spec) {
+    const out = {};
+    for (const k of Object.keys(spec))
+        out[k] = safeValue(obj[k === "vAlign" ? "verticalAlign" : k]);
+    return out;
+}
+function setSimpleSettings(params, type, spec) {
+    const doc = getActiveDocument(), obj = editingTarget(params, [type]), patch = checkedSettings(params.settings, spec);
+    return editObjectSettings(doc, obj, params, () => readSimpleSettings(obj, spec), patch, () => {
+        // 自动布局开关先写，避免后续尺寸或位置变更被旧状态覆盖。
+        if (patch.autoSize !== undefined)
+            obj.autoSize = patch.autoSize;
+        for (const k of Object.keys(patch))
+            obj[k === "vAlign" ? "verticalAlign" : k] = patch[k];
+    });
+}
+function scrollTarget(params) {
+    const obj = editingTarget(params, [], true);
+    if (obj !== getActiveDocument().content && String(obj.objectType).toLowerCase() !== "list")
+        throw new Error("ScrollPane 设置只支持当前组件根或原生 List；子组件需打开其所属文档");
+    return obj;
+}
+function scrollSettings(obj) {
+    return { overflow: obj.overflow, scroll: obj.scroll, scrollBarDisplay: obj.scrollBarDisplay, scrollBarFlags: obj.scrollBarFlags,
+        pageMode: Boolean(obj.scrollBarFlags & FairyEditor.FScrollPane.PAGE_MODE), pageControllerName: obj.pageController || "" };
+}
+function setScrollSettings(params) {
+    const doc = getActiveDocument(), obj = scrollTarget(params), patch = checkedSettings(params.settings, { overflow: ["visible", "hidden", "scroll"], scroll: ["horizontal", "vertical", "both"],
+        scrollBarDisplay: ["default", "visible", "auto", "hidden"], scrollBarFlags: "int", pageMode: "boolean", pageControllerName: "string" });
+    if (patch.pageControllerName)
+        resolveController(doc, patch.pageControllerName);
+    const flag = FairyEditor.FScrollPane.PAGE_MODE;
+    if (patch.pageMode !== undefined && patch.scrollBarFlags !== undefined && Boolean(patch.scrollBarFlags & flag) !== patch.pageMode)
+        throw new Error("pageMode 与 scrollBarFlags 冲突");
+    if (patch.pageMode !== undefined)
+        patch.scrollBarFlags = patch.pageMode ? (patch.scrollBarFlags === undefined ? obj.scrollBarFlags : patch.scrollBarFlags) | flag
+            : (patch.scrollBarFlags === undefined ? obj.scrollBarFlags : patch.scrollBarFlags) & ~flag;
+    return editObjectSettings(doc, obj, params, () => scrollSettings(obj), patch, () => {
+        for (const k of ["overflow", "scroll", "scrollBarDisplay", "scrollBarFlags", "pageControllerName"])
+            if (patch[k] !== undefined)
+                obj[k === "pageControllerName" ? "pageController" : k] = patch[k];
+    });
+}
+function setGroup(params) {
+    const doc = getActiveDocument(), obj = editingTarget(params), id = params.groupId;
+    if (typeof id !== "string")
+        throw new Error("groupId 必须是字符串，空字符串表示解除分组");
+    if (id) {
+        const group = editingTarget({ target: { id } }, ["group"]);
+        let current = group;
+        const visited = new Set();
+        while (current) {
+            if (current === obj || visited.has(current.id))
+                throw new Error("不能建立循环分组");
+            visited.add(current.id);
+            current = current.groupId ? findObjectById(doc.content, current.groupId) : null;
+        }
+    }
+    return editObjectSettings(doc, obj, params, () => ({ groupId: obj.groupId || "" }), { groupId: id }, () => obj.groupId = id);
+}
+const RELATION_NAMES = ["Left_Left", "Left_Center", "Left_Right", "Center_Center", "Right_Left", "Right_Center", "Right_Right", "LeftExt_Left", "LeftExt_Right", "RightExt_Left", "RightExt_Right", "Width",
+    "Top_Top", "Top_Middle", "Top_Bottom", "Middle_Middle", "Bottom_Top", "Bottom_Middle", "Bottom_Bottom", "TopExt_Top", "TopExt_Bottom", "BottomExt_Top", "BottomExt_Bottom", "Height"];
+function relationsSnapshot(obj) {
+    const out = [], items = obj.relations.items;
+    for (let i = 0; i < items.Count; i++) {
+        const item = items.get_Item(i), defs = [];
+        for (let j = 0; j < item.defs.Count; j++) {
+            const d = item.defs.get_Item(j), name = RELATION_NAMES.find(k => FairyEditor.FRelationType[k] === d.type);
+            defs.push({ relationType: name || String(d.type), usePercent: Boolean(d.percent) });
+        }
+        out.push({ targetId: item.target === obj.parent ? "parent" : item.target.id, readOnly: Boolean(item.readOnly), definitions: defs });
+    }
+    return out;
+}
+function editRelation(params, remove) {
+    const doc = getActiveDocument(), obj = editingTarget(params), id = params.relationTargetId || "parent";
+    const target = id === "parent" ? doc.content : editingTarget({ target: { id } });
+    const name = String(params.relationType || "").replace(/-/g, "_").toLowerCase(), key = RELATION_NAMES.find(k => k.toLowerCase() === name);
+    if (!key)
+        throw new Error("未知关系类型，请使用 get_relations 返回的 relationTypes");
+    if (target === obj)
+        throw new Error("关系目标不能是自身");
+    const seen = new Set(), reaches = (node) => {
+        if (node === obj)
+            return true;
+        if (seen.has(node))
+            return false;
+        seen.add(node);
+        const items = node.relations.items;
+        for (let i = 0; i < items.Count; i++)
+            if (reaches(items.get_Item(i).target))
+                return true;
+        return false;
+    };
+    if (!remove && reaches(target))
+        throw new Error("不能建立循环关系");
+    if (params.usePercent !== undefined && typeof params.usePercent !== "boolean")
+        throw new Error("usePercent 必须是布尔值");
+    const type = FairyEditor.FRelationType[key], old = obj.relations.GetItem(target);
+    if (old && old.readOnly)
+        throw new Error("不能改写继承的只读关系");
+    let previous = null;
+    if (old)
+        for (let i = 0; i < old.defs.Count; i++)
+            if (old.defs.get_Item(i).type === type)
+                previous = old.defs.get_Item(i);
+    const changed = remove ? Boolean(previous) : !previous || Boolean(previous.percent) !== Boolean(params.usePercent);
+    if (!changed)
+        return finishEditingWrite(doc, obj, relationsSnapshot(obj), relationsSnapshot(obj), params, false);
+    return editObjectSettings(doc, obj, params, () => ({ relations: relationsSnapshot(obj) }), null, () => {
+        if (old) {
+            const keep = [];
+            for (let i = 0; i < old.defs.Count; i++) {
+                const d = old.defs.get_Item(i);
+                if (d.type !== type)
+                    keep.push({ type: d.type, percent: d.percent });
+            }
+            obj.relations.RemoveItem(old);
+            keep.forEach(d => obj.relations.AddItem(target, d.type, d.percent));
+        }
+        if (!remove)
+            obj.relations.AddItem(target, type, Boolean(params.usePercent));
+        const now = obj.relations.GetItem(target);
+        if (remove ? now && now.HasDef(type) : !now || !now.HasDef(type))
+            throw new Error("Editor 未接受关系变更");
+    });
+}
 function handleCommand(request) {
     const action = String(request.action || "");
     const params = request.params || {};
@@ -3533,6 +3993,9 @@ function handleCommand(request) {
     if (loader3dBusy && ["ping", "get_project", "get_active_document", "list_packages", "list_items"].indexOf(action) < 0)
         verificationError("document_busy", "Loader3D 加载中，请等待当前请求完成", {});
     const actionsBlockedDuringPublish = {
+        set_image_settings: true, create_object: true, set_properties: true, set_button_binding: true, set_list_settings: true,
+        set_scroll_settings: true, set_group: true, add_relation: true, remove_relation: true, set_loader: true,
+        set_text_style: true, replace_object_resource: true,
         set_gear: true,
         upsert_controller_action: true, remove_controller_action: true,
         create_controller: true, add_controller_page: true, rename_controller_page: true, set_controller_page: true,
@@ -3564,6 +4027,41 @@ function handleCommand(request) {
     if (publishInProgress && actionsBlockedDuringPublish[action])
         throw new Error(`FairyGUI 发布进行中，暂不能执行：${action}`);
     switch (action) {
+        case "get_image_settings": return { settings: imageSettings(resolveItem(params)), scope: "package" };
+        case "set_image_settings": return setImageSettings(params);
+        case "create_object": return createObject(params);
+        case "set_properties": return setProperties(params);
+        case "get_button_binding": {
+            const obj = editingTarget(params, ["component"]);
+            return { target: targetSummary(obj, params.target), binding: buttonBinding(obj), controllers: controllerList(getActiveDocument()).map(controllerSnapshot) };
+        }
+        case "set_button_binding": return setButtonBinding(params);
+        case "get_list_settings": {
+            const obj = editingTarget(params, ["list"]);
+            return { target: targetSummary(obj, params.target), settings: readSimpleSettings(obj, LIST_SETTING_SPEC) };
+        }
+        case "set_list_settings": return setSimpleSettings(params, "list", LIST_SETTING_SPEC);
+        case "get_scroll_settings": {
+            const obj = scrollTarget(params);
+            return { target: targetSummary(obj, params.target), settings: scrollSettings(obj) };
+        }
+        case "set_scroll_settings": return setScrollSettings(params);
+        case "get_group": {
+            const obj = editingTarget(params);
+            return { target: targetSummary(obj, params.target), groupId: obj.groupId || "" };
+        }
+        case "set_group": return setGroup(params);
+        case "get_relations": {
+            const obj = editingTarget(params);
+            return { target: targetSummary(obj, params.target), relations: relationsSnapshot(obj), relationTypes: RELATION_NAMES };
+        }
+        case "add_relation": return editRelation(params, false);
+        case "remove_relation": return editRelation(params, true);
+        case "get_loader": {
+            const obj = editingTarget(params, ["loader"]);
+            return { target: targetSummary(obj, params.target), settings: readSimpleSettings(obj, LOADER_SETTING_SPEC) };
+        }
+        case "set_loader": return setSimpleSettings(params, "loader", LOADER_SETTING_SPEC);
         case "get_gears": return getGears(params);
         case "get_controller_actions": return getControllerActions(params);
         case "upsert_controller_action":

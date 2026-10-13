@@ -68,6 +68,8 @@ SPINE_CAPABILITIES = frozenset({"get_loader3d", "set_loader3d", "capture_documen
 CONTROLLER_CAPABILITIES = frozenset({"get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"})
 GEAR_CAPABILITIES = frozenset({"get_gears", "set_gear"})
 CONTROLLER_ACTION_CAPABILITIES = frozenset({"get_controller_actions", "upsert_controller_action", "remove_controller_action"})
+EDITING_CAPABILITIES = frozenset({"get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
+    "get_list_settings", "set_list_settings", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group", "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"})
 
 
 class BridgeError(RuntimeError):
@@ -206,6 +208,8 @@ class BridgeClient:
     ) -> dict[str, Any]:
         context = self.project_context()
         status = self.ensure_ready()
+        if action in EDITING_CAPABILITIES and action not in status.get("capabilities", []):
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少能力：{action}，请同步并重新加载 0.9.0 或更高版本插件。")
         if action in GEAR_CAPABILITIES and action not in status.get("capabilities", []):
             raise BridgeError(f"FairyGUI Agent Bridge 缺少能力：{action}，请同步并重新加载 0.8.7 或更高版本插件。")
         if action in CONTROLLER_ACTION_CAPABILITIES and action not in status.get("capabilities", []):

@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.8.9`
+- Bridge 版本：`0.9.0`
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：56；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
+- MCP 工具数：73；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -25,7 +25,7 @@
 | --- | --- | --- |
 | `fgui_status` / `fgui_ping` / `fgui_use_project` | — / — / `project_path` | 读取状态、握手或选择工程 |
 | `fgui_get_project` / `fgui_list_packages` | 无 | 读取工程或包 |
-| `fgui_list_items` | `package_name`, `item_type?` | 列出包内资源 |
+| `fgui_list_items` | `package_name`, `item_type?` | 返回 `{package, items}` 对象，与插件响应一致 |
 | `fgui_open_document` | `package_name`, `item_name` | 打开已有组件文档 |
 | `fgui_create_component` | 包、名称、尺寸、目录、扩展、导出、重名策略 | 新建组件资源 |
 | `fgui_import_image` / `fgui_import_font` / `fgui_import_sound` | 包、绝对路径、目录、名称、冲突策略、导出 | 导入或替换本地资源 |
@@ -36,6 +36,15 @@
 | `fgui_select_object` / `fgui_set_property` | ID、路径或唯一名称 | 选择对象或修改白名单属性 |
 | `fgui_replace_object_resource` | target、resource_url、expected_type、state?、save? | 通过 Editor API 替换 Image/Loader 资源引用，不支持 Button state |
 | `fgui_get_text_style` / `fgui_set_text_style` | target、style、save? | 读取或设置文本对象样式并回读 |
+| `fgui_create_object` | `object_type`, name?, x/y/width/height?, insert_index?, group_member_ids?, save=false | 创建 text/richtext/inputtext/loader/list/group/graph；保存 group 必须指定成员 |
+| `fgui_set_properties` | target、`properties`、save=false | 一次预检和批量写入白名单属性；尺寸忽略 Pivot 位移，坐标最后应用 |
+| `fgui_get_image_settings` / `fgui_set_image_settings` | 图片 url 或包/资源定位；修改 `settings`, save=false | 包级缩放/九宫格：`scaleMode=none/9grid/tile`、`scale9Grid={x,y,width,height}`、`gridTile=0..31` |
+| `fgui_get_button_binding` / `fgui_set_button_binding` | target；修改 `settings`, save=false | `controllerName`、`pageId`、`selected`；空控制器名清除绑定 |
+| `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | `layout`、`repeatX/repeatY`、`lineGap/columnGap`、`align/vAlign`、`autoResizeItem`、`selectionMode` |
+| `fgui_get_scroll_settings` / `fgui_set_scroll_settings` | target；修改 `settings`, save=false | 根组件或原生 List：`overflow`、`scroll`、`scrollBarDisplay`、`scrollBarFlags`、`pageMode`、`pageControllerName` |
+| `fgui_get_group` / `fgui_set_group` | target；修改 `group_id`, save=false | 设置同层分组，空串解除，拒绝循环 |
+| `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation` | target；修改 `relation_type`, `relation_target_id=parent`, `use_percent=false`（add）, save=false | 读取可用类型；增删单条关系并保留同目标其它关系，拒绝循环和继承只读关系 |
+| `fgui_get_loader` / `fgui_set_loader` | target；修改 `settings`, save=false | 二维 Loader：`fill`、`align/vAlign`、`autoSize`、`shrinkOnly`、`useResize` |
 | `fgui_verify_document` | `max_depth`, target?, `expected?`, `read_xml=true` | 无 expected 为快照；有 expected 时比对 Editor/磁盘 XML |
 | `fgui_insert_object` / `fgui_remove_object` | 资源 URL、坐标 / 目标 | 插入已有资源或删除非根对象 |
 | `fgui_get_loader3d` / `fgui_set_loader3d` | 对象定位；读取 `include_asset_info=true`；修改 `resource_url?`, `animation_name?`, `skin_name?`, `playing?`, `loop?`, `frame?`, `save=false`, `verify=true`, `skip_name_validation=false`, `fix_spine=true` | 读取/修改直属 Loader3D 的包内 Spine；省略保持，空字符串清除 |
@@ -55,6 +64,10 @@
 | `fgui_get_publish_settings` / `fgui_publish` | 包名? / 范围、包、分支、保存策略 | 读取或执行现有发布配置；发布前自动将 1920×1080/2K 级大图设置为 FairyGUI `alone` 纹理集，避免与小图混排 |
 
 ## 组件与动画语义
+
+- **原生编辑**：只修改当前文档直属对象，嵌套定义先打开所属组件；ScrollPane 仅允许根组件或原生 List。按钮绑定引用父控制器名称和稳定页面 ID，不重写父控制器首页。分组边界由成员决定，空分组不会被 Editor 保存；创建并保存时需传成员。新接口实际修改清除旧 Agent 历史，无完整结构撤销，失败返回可能已发生的修改，不伪称回滚。
+- **布局配置**：List layout 为 `column/row/flow_hz/flow_vt/pagination`，repeatX/Y 为列数/行数（0 自动计算），分页还需配置 ScrollPane。overflow 为 `visible/hidden/scroll`，scroll 为 `horizontal/vertical/both`，scrollBarDisplay 为 `default/visible/auto/hidden`；pageMode 只修改对应位并保留其它 scrollBarFlags。Loader fill 为 `none/scale/scaleMatchHeight/scaleMatchWidth/scaleFree/scaleNoBorder`，`scale` 为等比适配。
+- **文本与几何**：文本支持 font/fontSize/color、align/vAlign/autoSize、lineGap/letterSpacing、text、bold/italic/underline/strike、stroke/strokeColor/strokeSize、shadow/shadowColor/shadowX/shadowY、ubbEnabled/varsEnabled/singleLine、outlineSoftness/underlaySoftness/faceDilate，效果以宿主和字体实际支持为准。描边/阴影参数需启用对应效果。批量坐标/尺寸与文本样式按固定顺序写入，拒绝与自动尺寸或 useSourceSize 冲突；不自动关闭调用方未指定的约束。验证支持描边、阴影、UBB 默认省略和组件引用默认尺寸，保留 `externalReload=false` 的接口语义。
 
 - **页面与作用域**：Controller/Action 属于当前文档根组件，Gear 属于直属子对象；联动可引用当前/直属子组件控制器，不改子组件资源。页面定位三选一，优先稳定 ID；名称不允许空白、逗号或控制字符，同一控制器中新页面名称不能重复。创建有页面的控制器或向空控制器追加首页时自动选中第一页。切页不修改 homePage，重开可能按首页规则重选。
 - **Gear 配置**：display 用 `visible_page_ids`，空数组是全页可见；其余类型必须传 `default_value` 和 `page_values=[{"pageId":"0","value":...}]`，未列页使用默认值。text 为不含竖线的字符串；icon 为图片 ui:// 或空串；xy 为整数 `{x,y}`；size 为非负整数 `{width,height,scaleX?,scaleY?}`（缩放默认 1）；color 为 `{color:"#RRGGBB",strokeColor?:"#RRGGBB"}`（描边默认黑）。数值绝对值不超过 1000000。set 是完整替换而非单页补丁；读取中的未序列化默认值为 null，其它 Gear 返回 XML。
@@ -88,7 +101,7 @@
 - 图片、字体和声音导入支持 `error`、`auto_rename`、`replace`。`replace` 只允许相同资源类型。
 - 所有本地导入路径均必须是绝对路径；导入和替换是磁盘写入。
 - `fgui_save_document` / `fgui_save_all` 保存文档和包改动；`fgui_discard_document` 只放弃当前文档未保存改动。
-- Loader3D、Controller、Gear、Action 默认不保存，实际编辑清空旧 Agent 历史，无完整撤销；无变化且不保存时保留历史。`save=true` 保存整个组件并回读 XML；Gear 校验目标全部 Gear，Action 校验内容和顺序。保存失败报告磁盘状态，不声称成功或完整回滚；保留 `error.details`。
+- Loader3D、Controller、Gear、Action 与原生编辑接口默认不保存，实际编辑清空旧 Agent 历史，无完整撤销；无变化且不保存时保留历史。`save=true` 保存整个组件并回读 XML；Gear 校验目标全部 Gear，Action 校验内容和顺序，原生编辑核对 Editor 自己的序列化快照。图片九宫格保存作用于整个包并影响所有引用。保存失败报告磁盘状态，不声称成功或完整回滚；保留 `error.details`。
 - SpineFixer 只接受已验证的 Spine 4.2 二进制 .skel 有效导出包围盒，修复尺寸/锚点并设置 pma=false，回读 package.xml。绑定 resource_url 或插入 Spine 默认修复并保存所属包，独立于组件 save=false，不能用文档 undo/discard 回退；`resourceFix` 单独报告。`fix_spine=false` / `--no-fix-spine` 可跳过，只读及仅播放属性调整不修复，不提供 Spine 导入。
 - 截图需实际观察，资源、布局、遮挡与可见性大体正确即可。成功为 pending_review；缺图/坏图返回 manual_required，要求用户自行验证，保留修改，不自动回滚。结构、持久化和视觉结论分别报告；对象树存在 Spine 不等于已捕获其图像。
 - 截图范围：scale<=4、单边<=4096、总像素<=8388608、PNG<=16 MiB；仅写 `.agent/captures/`，一天前的本工具截图会清理。
@@ -101,7 +114,8 @@
 - 基础：`status`、`ping`、`project`、`packages`、`items`、`open`、`active`、`tree`、`select`、`set`、`insert`、`remove`
 - 资源：`create-component`、`create-button`、`import-image`、`import-font`、`import-sound`、`create-movieclip`、`get-movieclip`、`update-movieclip`、`remove-movieclip`、`get-loader3d`、`set-loader3d`、`fix-spine-anchor`
 - Transition：`transitions`、`get-transition`、`upsert-transition`、`remove-transition`、`add-transition-item`、`update-transition-item`、`remove-transition-item`
-- 属性与验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`verify-document`、`capture-document`
+- 属性与验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`set-properties`、`verify-document`、`capture-document`
+- 原生布局：`create-object`、`get-image-settings/set-image-settings`、`get-button-binding/set-button-binding`、`get-list-settings/set-list-settings`、`get-scroll-settings/set-scroll-settings`、`get-loader/set-loader`、`get-group/set-group`、`get-relations/add-relation/remove-relation`
 - 状态编辑：`controllers`、`create-controller`、`add-controller-page`、`rename-controller-page`、`set-controller-page`、`get-gears`、`set-gear`、`get-controller-actions`、`upsert-controller-action`、`remove-controller-action`
 - 预览：`preview-transition`、`preview-movieclip`
 - 保存发布：`save`、`discard`、`save-all`、`history`、`undo`、`redo`、`publish-settings`、`publish`
