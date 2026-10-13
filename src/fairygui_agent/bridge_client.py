@@ -6,6 +6,7 @@ import json
 import os
 import time
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,7 @@ GEAR_CAPABILITIES = frozenset({"get_gears", "set_gear"})
 CONTROLLER_ACTION_CAPABILITIES = frozenset({"get_controller_actions", "upsert_controller_action", "remove_controller_action"})
 EDITING_CAPABILITIES = frozenset({"get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
     "get_list_settings", "set_list_settings", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group", "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"})
+PERFORMANCE_CAPABILITIES = frozenset({"apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit"})
 
 
 class BridgeError(RuntimeError):
@@ -206,8 +208,41 @@ class BridgeClient:
         *,
         timeout: float | None = None,
     ) -> dict[str, Any]:
+        """记录 Bridge 内部计时；调用端分发及模型等待发生在此函数之外。"""
+        started = time.perf_counter()
+        timing: dict[str, Any] = {"action": action, "timestamp": datetime.now().astimezone().isoformat(), "failed": True}
+        try:
+            response = self._call_raw(action, params, timeout=timeout, _timing=timing)
+            result = response.get("result")
+            timing["failed"] = not bool(response.get("ok")) or (isinstance(result, dict) and result.get("status") == "failed")
+            return response
+        finally:
+            timing["roundTripMs"] = round((time.perf_counter() - started) * 1000, 3)
+            if not hasattr(self, "_diagnostics"):
+                self._diagnostics = deque(maxlen=100)
+            self._diagnostics.append(timing)
+
+    def diagnostics(self, limit: int = 20) -> dict[str, Any]:
+        """只读取当前 MCP 进程的有界记录，不连接或唤醒 Editor。"""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit 必须为 1..100")
+        return {"version": __version__, "records": list(getattr(self, "_diagnostics", []))[-limit:],
+                "scope": "current_mcp_process", "hostDispatchIncluded": False, "modelTimeIncluded": False}
+
+    def _call_raw(
+        self,
+        action: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+        _timing: dict[str, Any],
+    ) -> dict[str, Any]:
+        ready_started = time.perf_counter()
         context = self.project_context()
         status = self.ensure_ready()
+        _timing["readinessMs"] = round((time.perf_counter() - ready_started) * 1000, 3)
+        if action in PERFORMANCE_CAPABILITIES and action not in status.get("capabilities", []):
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少能力：{action}，请同步并重新加载 0.10.0 或更高版本插件。")
         if action in EDITING_CAPABILITIES and action not in status.get("capabilities", []):
             raise BridgeError(f"FairyGUI Agent Bridge 缺少能力：{action}，请同步并重新加载 0.9.0 或更高版本插件。")
         if action in GEAR_CAPABILITIES and action not in status.get("capabilities", []):
@@ -240,6 +275,7 @@ class BridgeClient:
         response_dir.mkdir(parents=True, exist_ok=True)
 
         request_id = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
+        _timing["requestId"] = request_id
         request_path = request_dir / f"{request_id}.json"
         response_path = response_dir / f"{request_id}.json"
         temp_path = request_path.with_suffix(".json.tmp")
@@ -252,14 +288,21 @@ class BridgeClient:
             "createdAt": datetime.now().astimezone().isoformat(),
             "clientPid": os.getpid(),
         }
-        temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        encoded = json.dumps(payload, ensure_ascii=False)
+        _timing["requestBytes"] = len(encoded.encode("utf-8"))
+        temp_path.write_text(encoded, encoding="utf-8")
         os.replace(temp_path, request_path)
+        wait_started = time.perf_counter()
 
         def read_response() -> dict[str, Any] | None:
             if not response_path.exists():
                 return None
             try:
-                response = json.loads(response_path.read_text(encoding="utf-8"))
+                raw = response_path.read_text(encoding="utf-8")
+                _timing["responseBytes"] = len(raw.encode("utf-8"))
+                _timing["requestWaitMs"] = round((time.perf_counter() - wait_started) * 1000, 3)
+                response = json.loads(raw)
+                _timing["editor"] = response.get("timing")
             finally:
                 response_path.unlink(missing_ok=True)
             if not isinstance(response, dict):
@@ -283,6 +326,8 @@ class BridgeClient:
             time.sleep(0.05)
 
         request_path.unlink(missing_ok=True)
+        _timing["requestWaitMs"] = round((time.perf_counter() - wait_started) * 1000, 3)
+        _timing["timeout"] = True
         raise TimeoutError(
             f"等待 FairyGUI 响应超时：{action} ({call_timeout:.1f}s)。"
             "请求可能已被编辑器认领并继续执行，重试前请先检查状态，避免写操作重复执行。"

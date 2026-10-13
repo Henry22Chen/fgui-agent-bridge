@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import filecmp
 import platform
 import shutil
 import subprocess
@@ -236,12 +235,17 @@ def build_entries(source_root: Path, destination_root: Path) -> list[CopyEntry]:
 
 
 def classify(entry: CopyEntry) -> str:
+    """按实际内容分类，避免同长度快速改写命中 filecmp 的 mtime 缓存。"""
     if not entry.destination.exists():
         return "CREATE"
-    if entry.destination.is_file() and filecmp.cmp(
-        entry.source, entry.destination, shallow=False
-    ):
-        return "UNCHANGED"
+    if entry.destination.is_file():
+        with entry.source.open("rb") as source, entry.destination.open("rb") as destination:
+            while True:
+                left, right = source.read(65536), destination.read(65536)
+                if left != right:
+                    return "UPDATE"
+                if not left:
+                    return "UNCHANGED"
     return "UPDATE"
 
 

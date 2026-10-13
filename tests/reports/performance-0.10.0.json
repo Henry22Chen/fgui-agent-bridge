@@ -1,0 +1,140 @@
+{
+  "version": "0.10.0",
+  "protocol": "2.0",
+  "tools": 80,
+  "environment": "Windows / FairyGUI Editor 6.1.4 / direct local MCP stdio",
+  "offlineTestsPassed": 81,
+  "nativeCases": [
+    {
+      "name": "native full snapshot revision and targeted read",
+      "passed": true
+    },
+    {
+      "name": "wrong document rejected",
+      "passed": true
+    },
+    {
+      "name": "unknown query field rejected",
+      "passed": true
+    },
+    {
+      "name": "dry-run creates no nodes",
+      "passed": true
+    },
+    {
+      "name": "20 native IDs and replay without duplicate creation",
+      "passed": true
+    },
+    {
+      "name": "operation key reuse rejected",
+      "passed": true
+    },
+    {
+      "name": "80 scalar requests versus one batch with same final geometry",
+      "passed": true
+    },
+    {
+      "name": "compact receipt below 30 percent of verbose",
+      "passed": true
+    },
+    {
+      "name": "stale plan rejected",
+      "passed": true
+    },
+    {
+      "name": "partial failure is MCP error",
+      "passed": true
+    },
+    {
+      "name": "partial receipt retains completed write without saving",
+      "passed": true
+    },
+    {
+      "name": "dirty external handoff rejected",
+      "passed": true
+    },
+    {
+      "name": "one component save verified by native XML snapshot",
+      "passed": true
+    },
+    {
+      "name": "two states one image and complete snapshot restored",
+      "passed": true
+    },
+    {
+      "name": "invalid capture page rejected before changing state",
+      "passed": true
+    },
+    {
+      "name": "external XML reload refreshes actual native geometry",
+      "passed": true
+    },
+    {
+      "name": "external ticket cannot be reused",
+      "passed": true
+    },
+    {
+      "name": "foreign native edit prevents discard",
+      "passed": true
+    },
+    {
+      "name": "explicit dirty reload allowed only after complete snapshot restored",
+      "passed": true
+    },
+    {
+      "name": "duplicate external object IDs rejected before reload",
+      "passed": true
+    },
+    {
+      "name": "unknown receipt never claims safe retry",
+      "passed": true
+    },
+    {
+      "name": "same target Editor process throughout validation",
+      "passed": true
+    }
+  ],
+  "reopenCases": [
+    {
+      "name": "reopen native IDs and 20 object geometries persist",
+      "passed": true
+    },
+    {
+      "name": "reopen external XML geometry persists",
+      "passed": true
+    },
+    {
+      "name": "new Editor instance does not replay old receipts",
+      "passed": true
+    },
+    {
+      "name": "read-only reopen validation leaves document clean",
+      "passed": true
+    }
+  ],
+  "crossTypeBatch": {
+    "operations": 16,
+    "passed": true
+  },
+  "metrics": {
+    "scalarRequests": 80,
+    "batchRequests": 1,
+    "scalarSeconds": 16.228212000001804,
+    "batchSeconds": 0.25940589999663644,
+    "compactBytes": 600,
+    "verboseBytes": 11860,
+    "batchTiming": {
+      "action": "apply_batch",
+      "failed": false,
+      "readinessMs": 2.793,
+      "requestBytes": 3092,
+      "responseBytes": 733,
+      "requestWaitMs": 252.42,
+      "editor": {
+        "queueWaitMs": 186,
+        "executionMs": 40
+      },
+      "roundTripMs": 257.348
+    }
+  }
+}

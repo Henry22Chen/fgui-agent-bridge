@@ -11,6 +11,7 @@ from typing import Any
 from .bridge_client import BridgeClient, BridgeError
 from .editor_launcher import EditorLauncher
 from .project_locator import ProjectLocator
+from .performance import validate_batch, validate_operation_key
 
 
 def load_json_value(value: str) -> Any:
@@ -282,6 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--name")
     verify_parser.add_argument("--expected", help="预期属性 JSON 对象；必须指定目标")
     verify_parser.add_argument("--editor-only", action="store_true", help="只比对 Editor，不读取 XML")
+    verify_parser.add_argument("--include-tree", action="store_true", help="验证预期字段时同时返回对象树")
 
     insert_parser = subparsers.add_parser("insert", help="插入已有 FairyGUI 资源")
     insert_parser.add_argument("url", help="资源 URL，例如 ui://packageIditemId")
@@ -352,6 +354,31 @@ def build_parser() -> argparse.ArgumentParser:
     call_parser = subparsers.add_parser("call", help="调试用：调用原始 action")
     call_parser.add_argument("action")
     call_parser.add_argument("--params", default="{}", help="JSON 对象")
+    batch = subparsers.add_parser("apply-batch", help="一条请求执行 JSON 文件中的批量计划")
+    batch.add_argument("plan_file")
+    batch.add_argument("--dry-run", action="store_true")
+    batch.add_argument("--save", action="store_true")
+    batch.add_argument("--verbose", action="store_true")
+    result = subparsers.add_parser("get-batch-result", help="查询批量回执，unknown 不代表未执行")
+    result.add_argument("document_url")
+    result.add_argument("operation_key")
+    result.add_argument("--verbose", action="store_true")
+    query = subparsers.add_parser("get-objects", help="按对象/字段批量读取及取得 revision")
+    query.add_argument("document_url")
+    query.add_argument("targets", help='JSON 数组，例如 [{"id":"n1"}]')
+    query.add_argument("--fields", help='JSON 字段数组，例如 ["x","y"]')
+    capture = subparsers.add_parser("capture-states", help="一次请求截取多个状态，输出原图路径；不保存")
+    capture.add_argument("document_url")
+    capture.add_argument("states", help="JSON 状态数组")
+    capture.add_argument("--scale", type=float, default=0.5)
+    begin = subparsers.add_parser("begin-external-edit", help="干净文档的 XML 编辑交接，不保存")
+    begin.add_argument("document_url")
+    finish = subparsers.add_parser("finish-external-edit", help="内存快照未变时重载外部 XML")
+    finish.add_argument("document_url")
+    finish.add_argument("token")
+    finish.add_argument("--allow-unchanged-dirty", action="store_true")
+    diagnostics = subparsers.add_parser("diagnostics", help="当前 CLI 进程的计时记录；不连接 Editor")
+    diagnostics.add_argument("--limit", type=int, default=20)
     return parser
 
 
@@ -363,6 +390,9 @@ def main() -> int:
     try:
         if args.command == "status":
             print_result(client.describe_status())
+            return 0
+        if args.command == "diagnostics":
+            print_result(client.diagnostics(args.limit))
             return 0
 
         if args.command == "update":
@@ -398,7 +428,35 @@ def main() -> int:
         params: dict[str, Any] = {}
         command_timeout = args.timeout
 
-        if args.command == "project":
+        if args.command == "apply-batch":
+            params = json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
+            if not isinstance(params, dict) or set(params) - {"documentUrl", "expectedRevision", "operationKey", "operations", "save", "dryRun", "verbose"}:
+                raise ValueError("plan_file 必须是批量计划对象，包含文档、revision、操作键及 operations")
+            validate_batch(params.get("operations"), params.get("operationKey"))
+            for key, flag in (("dryRun", args.dry_run), ("save", args.save), ("verbose", args.verbose)):
+                if type(params.get(key, False)) is not bool:
+                    raise ValueError(f"{key} 必须是布尔值")
+                params[key] = params.get(key, False) or flag
+            action, command_timeout = "apply_batch", max(args.timeout, 60)
+        elif args.command == "get-batch-result":
+            validate_operation_key(args.operation_key)
+            action = "get_batch_result"
+            params = {"documentUrl": args.document_url, "operationKey": args.operation_key, "verbose": args.verbose}
+        elif args.command == "get-objects":
+            action = "get_objects"
+            params = {"documentUrl": args.document_url, "targets": json.loads(args.targets)}
+            if args.fields is not None:
+                params["fields"] = json.loads(args.fields)
+        elif args.command == "capture-states":
+            action, command_timeout = "capture_states", max(args.timeout, 60)
+            params = {"documentUrl": args.document_url, "states": json.loads(args.states), "scale": args.scale}
+        elif args.command == "begin-external-edit":
+            action = "begin_external_edit"
+            params = {"documentUrl": args.document_url}
+        elif args.command == "finish-external-edit":
+            action = "finish_external_edit"
+            params = {"documentUrl": args.document_url, "token": args.token, "allowUnchangedDirty": args.allow_unchanged_dirty}
+        elif args.command == "project":
             action = "get_project"
         elif args.command == "packages":
             action = "list_packages"
@@ -651,6 +709,8 @@ def main() -> int:
         elif args.command == "verify-document":
             action = "verify_document"
             params = {"maxDepth": args.max_depth, "readXml": not args.editor_only}
+            if args.include_tree:
+                params["includeTree"] = True
             if args.expected is not None:
                 if not any((args.path, args.id, args.name)):
                     raise ValueError("--expected 必须指定目标")
@@ -708,6 +768,8 @@ def main() -> int:
 
         response = client.call_raw(action, params, timeout=command_timeout)
         print_result(response)
+        if action == "apply_batch" and response.get("result", {}).get("status") not in {"succeeded", "preflight"}:
+            return 1
         return 0 if response.get("ok") else 1
     except (BridgeError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
         print(f"错误：{exc}", file=sys.stderr)

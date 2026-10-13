@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, TextContent
 
 from . import __version__
 from .animation_models import TransitionDefinition, TransitionItem
@@ -15,11 +16,14 @@ from .bridge_client import BridgeClient
 from .editor_launcher import EditorLauncher
 from .project_locator import ProjectLocator
 from .capture import capture_result, manual_verification
+from .performance import validate_batch, validate_operation_key, batch_tool_result, capture_states_result
 
 mcp = FastMCP(
     "FairyGUI Agent Bridge",
     instructions=(
-        "先读取工程、包和对象树，再执行修改。文档属性和对象修改默认不保存；"
+        "先确认工程和文档；布局优先 get_objects 定向读取后 apply_batch，一次提交多个对象，避免逐属性循环 MCP。"
+        "计划绑定 document_url/revision/operation_key，超时先 get_batch_result；批量失败可部分执行，不自动回滚。"
+        "视觉按明确状态矩阵用 capture_states 集中截图；先按设计稿及素材可见边界规划，再修改和校准。文档属性和对象修改默认不保存；"
         "创建组件或按钮会新增包资源，导入/替换图片、声音和 MovieClip 会写入磁盘，调用前必须确认包、目录、名称和冲突策略。"
         "Transition 编辑与已有 MovieClip 更新支持 Agent undo/redo；新建/删除资源不能完整撤销，且资源写入不能由 fgui_discard_document 回滚。"
         "动画预览只改变 Editor 当前状态，不保存资源默认属性。"
@@ -682,15 +686,79 @@ def fgui_set_text_style(style: dict[str, Any], object_id: str | None = None, obj
 
 
 @mcp.tool()
-def fgui_verify_document(max_depth: int = 12, object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, expected: dict[str, Any] | None = None, read_xml: bool = True) -> dict[str, Any]:
+def fgui_verify_document(max_depth: int = 12, object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, expected: dict[str, Any] | None = None, read_xml: bool = True, include_tree: bool | None = None) -> dict[str, Any]:
     """只读验证 target 的 expected 属性；默认比对磁盘 XML，不保存、不重载。无 expected 时仅返回快照。"""
     params: dict[str, Any] = {"maxDepth": max_depth, "readXml": read_xml}
+    if include_tree is not None:
+        params["includeTree"] = include_tree
     if expected is not None:
         if not any((object_id, object_path, object_name)):
             raise ValueError("expected 必须提供 target")
         params["expected"] = expected
     if any((object_id, object_path, object_name)): params["target"] = _target(object_id, object_path, object_name)
     return _client.call("verify_document", params)
+
+
+@mcp.tool()
+def fgui_get_objects(document_url: str, targets: list[dict[str, str]], fields: list[str] | None = None) -> dict[str, Any]:
+    """批量读取根/直属对象的指定字段及 revision；targets 每项仅 id/path/name 之一，空数组仅取 revision。默认读位置尺寸，不展开子树。"""
+    params: dict[str, Any] = {"documentUrl": document_url, "targets": targets}
+    if fields is not None:
+        params["fields"] = fields
+    return _client.call("get_objects", params)
+
+
+@mcp.tool()
+def fgui_apply_batch(document_url: str, expected_revision: str, operation_key: str, operations: list[dict[str, Any]], dry_run: bool = False, save: bool = False, verbose: bool = False) -> CallToolResult:
+    """一条队列请求执行 1..200 项白名单操作；每项 {action,params,ref?}。params 用 Bridge camelCase，target={id/path/name}；创建 ref 后用 target.id='$ref' 引用。支持原生创建/已有图片组件插入、属性/文本/绑定/布局/分组/关系/Gear/控制器及对象移除，禁止导入发布或逐步保存。dry_run 仅结构/引用预检；失败可能部分执行、不自动保存/回滚。超时用 operation_key 查回执，相同键参数不能改变。默认摘要；save=true 仅整批结束保存当前组件。"""
+    validate_batch(operations, operation_key)
+    params = {"documentUrl": document_url, "expectedRevision": expected_revision, "operationKey": operation_key,
+              "operations": operations, "dryRun": dry_run, "save": save, "verbose": verbose}
+    try:
+        value = _client.call("apply_batch", params, timeout=60)
+    except TimeoutError as error:
+        raise TimeoutError(f"{error} operation_key={operation_key}；先调用 fgui_get_batch_result。") from error
+    return batch_tool_result(value)
+
+
+@mcp.tool()
+def fgui_get_batch_result(document_url: str, operation_key: str, verbose: bool = False) -> dict[str, Any]:
+    """查询当前 Editor 进程实例的批量回执；unknown/running 不代表可安全重试。不会切换文档或重新执行。"""
+    validate_operation_key(operation_key)
+    return _client.call("get_batch_result", {"documentUrl": document_url, "operationKey": operation_key, "verbose": verbose})
+
+
+@mcp.tool()
+def fgui_capture_states(document_url: str, states: list[dict[str, Any]], scale: float = 0.5, columns: int = 3, max_cell: int = 640) -> CallToolResult:
+    """一次请求按 [{label,controllers:{控制器名:页面ID}}] 截取 1..12 个设计态，finally 恢复指定根控制器。返回一张编号联系图，metadata 映射完整标签和原图路径；不保存，生成图不等于视觉验收。"""
+    if not 1 <= columns <= 4 or not 128 <= max_cell <= 1024:
+        raise ValueError("columns 范围 1..4，max_cell 范围 128..1024")
+    root = _client.project_context().queue_root
+    value = _client.call("capture_states", {"documentUrl": document_url, "states": states, "scale": scale}, timeout=60)
+    try:
+        return capture_states_result(root, value, columns, max_cell)
+    except (OSError, ValueError) as error:
+        # Preview restoration is complete on the Editor side even if contact-sheet decoding fails.
+        metadata = {**value, "visualVerificationStatus": "manual_required", "reason": f"联系图读取失败：{error}"}
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(metadata, ensure_ascii=False))])
+
+
+@mcp.tool()
+def fgui_begin_external_edit(document_url: str) -> dict[str, Any]:
+    """已授权 XML 编辑的只读交接：要求当前文档干净，返回绑定原生文档及完整内存快照的 token/文件路径；不保存。"""
+    return _client.call("begin_external_edit", {"documentUrl": document_url})
+
+
+@mcp.tool()
+def fgui_finish_external_edit(document_url: str, token: str, allow_unchanged_dirty: bool = False) -> dict[str, Any]:
+    """外部 XML 写入后重载原生文档，要求内存快照未变且 token 未使用。不写 XML、不保存、不发布。仅完整快照不变时可显式允许 dirty；其他内存修改始终拒绝。"""
+    return _client.call("finish_external_edit", {"documentUrl": document_url, "token": token, "allowUnchangedDirty": allow_unchanged_dirty})
+
+
+@mcp.tool()
+def fgui_diagnostics(limit: int = 20) -> dict[str, Any]:
+    """读取本 MCP 进程最近 1..100 次 Bridge 计时/字节记录，不连接 Editor；不含调用端分发或模型耗时。"""
+    return _client.diagnostics(limit)
 
 
 def _editing_call(action: str, object_id: str | None, object_path: str | None, object_name: str | None, **params: Any) -> dict[str, Any]:

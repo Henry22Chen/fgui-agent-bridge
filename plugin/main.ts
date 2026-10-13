@@ -11,7 +11,7 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.9.0";
+const BRIDGE_VERSION = "0.10.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -40,6 +40,7 @@ interface AgentResponse {
         details?: any;
     };
     timestamp: string;
+    timing?: { queueWaitMs: number, executionMs: number };
 }
 
 interface AgentPropertyHistoryEntry {
@@ -74,6 +75,7 @@ let editorIdentity: { pid: number, startedAt: string } = null;
 let editorIdentityError: string = null;
 let logFile = "";
 let initialized = false;
+const requestExecutionTimings: { [id: string]: { started: number, queueWaitMs: number } } = Object.create(null);
 let publishInProgress = false;
 const animationPreviewContexts: { [key: string]: any } = {};
 // 资源加载期间保护异步请求；期限由 Editor update 驱动，客户端超时不作为取消信号。
@@ -1091,6 +1093,7 @@ function writeStatus(): void {
             "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor",
             "get_gears", "set_gear", "get_controller_actions", "upsert_controller_action", "remove_controller_action",
             "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page",
+            "apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit",
             "get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
             "get_list_settings", "set_list_settings", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
             "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
@@ -2114,7 +2117,8 @@ function setTextStyle(params: any): any {
 function verifyDocument(params: any): any {
     const doc = getActiveDocument();
     if (params.externalReload) verificationError("unsupported_property", "暂不支持自动 external reload", { stage: "input" });
-    const tree = describeObject(doc.content, 0, params.maxDepth === undefined ? 12 : Number(params.maxDepth));
+    const includeTree = params.includeTree === true || (params.includeTree !== false && params.expected === undefined);
+    const tree = includeTree ? describeObject(doc.content, 0, params.maxDepth === undefined ? 12 : Number(params.maxDepth)) : undefined;
     if (params.expected !== undefined) {
         if (!params.target) verificationError("invalid_argument", "expected 必须提供 target", { stage: "input" });
         const expected = validateExpectations(params.expected);
@@ -3920,6 +3924,291 @@ function editRelation(params: any, remove: boolean): any {
     });
 }
 
+// A revision is opaque and process-local; full native snapshots detect out-of-band Editor edits.
+const documentRevisions = new WeakMap<object, { snapshot: string, savedVersion: number, modified: boolean, revision: string }>();
+let nextDocumentRevision = 0;
+const revisionEpoch = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const externalEditTickets: { [key: string]: any } = Object.create(null);
+
+function editorDocumentSnapshot(doc: any): string {
+    return String(doc.content.Write_editMode().ToXMLString(false));
+}
+
+function documentRevision(doc: any): string {
+    const snapshot = editorDocumentSnapshot(doc), previous = documentRevisions.get(doc);
+    if (previous && previous.snapshot === snapshot && previous.savedVersion === doc.savedVersion && previous.modified === Boolean(doc.isModified)) return previous.revision;
+    const revision = `${revisionEpoch}:${++nextDocumentRevision}`;
+    documentRevisions.set(doc, { snapshot, savedVersion: doc.savedVersion, modified: Boolean(doc.isModified), revision });
+    return revision;
+}
+
+function guardedDocument(url: any, expectedRevision?: any): any {
+    if (typeof url !== "string" || !url.startsWith("ui://")) throw new Error("documentUrl 必须是明确的组件 URL");
+    const doc = getActiveDocument();
+    if (doc.content.resourceURL !== url) verificationError("wrong_document", "活动文档与计划目标不符", { expected: url, actual: doc.content.resourceURL });
+    if (expectedRevision !== undefined && expectedRevision !== documentRevision(doc))
+        verificationError("stale_revision", "文档已变化，请重新读取后制定计划", { expected: expectedRevision, actual: documentRevision(doc) });
+    return doc;
+}
+
+const OBJECT_QUERY_FIELDS = ["x", "y", "width", "height", "scaleX", "scaleY", "pivotX", "pivotY", "anchor", "rotation", "alpha", "visible", "touchable", "opaque", "grayed", "enabled", "text", "icon", "font", "fontSize", "autoSize", "groupId"];
+
+function getObjects(params: any): any {
+    const doc = guardedDocument(params.documentUrl);
+    if (!Array.isArray(params.targets) || params.targets.length > 200) throw new Error("targets 必须是最多 200 项的数组，空数组仅取 revision");
+    const fields = params.fields === undefined ? ["x", "y", "width", "height"] : params.fields;
+    if (!Array.isArray(fields) || fields.some(field => typeof field !== "string" || OBJECT_QUERY_FIELDS.indexOf(field) < 0)) throw new Error("fields 包含不支持的读取字段");
+    const objects = params.targets.map(target => {
+        validateBatchTarget(target);
+        const obj = resolveObject(doc, target);
+        requireOwnedEditingTarget(doc, obj, true);
+        const value: any = { id: String(obj.id), name: String(obj.name), type: String(obj.objectType) };
+        fields.forEach(field => value[field] = safeValue(obj[field]));
+        return value;
+    });
+    return { documentUrl: doc.content.resourceURL, revision: documentRevision(doc), modified: Boolean(doc.isModified), objects };
+}
+
+const BATCH_FIELDS: { [action: string]: string[] } = {
+    create_object: ["objectType", "name", "x", "y", "width", "height", "insertIndex", "groupMemberIds"],
+    insert_object: ["url", "name", "x", "y", "insertIndex"],
+    set_properties: ["target", "properties"], set_text_style: ["target", "style"],
+    set_button_binding: ["target", "settings"], set_list_settings: ["target", "settings"],
+    set_scroll_settings: ["target", "settings"], set_loader: ["target", "settings"], set_group: ["target", "groupId"],
+    add_relation: ["target", "relationTargetId", "relationType", "usePercent"], remove_relation: ["target", "relationTargetId", "relationType"],
+    set_gear: ["target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds"],
+    create_controller: ["name", "pages"], set_controller_page: ["controllerName", "pageId", "pageName", "pageIndex"],
+    remove_object: ["target"]
+};
+
+function validateBatchTarget(target: any): void {
+    if (!target || typeof target !== "object" || Array.isArray(target) || Object.keys(target).length !== 1
+        || ["id", "path", "name"].indexOf(Object.keys(target)[0]) < 0 || typeof target[Object.keys(target)[0]] !== "string" || !target[Object.keys(target)[0]])
+        throw new Error("target 必须且只能提供非空 id/path/name 之一");
+}
+
+function batchReference(value: any, aliases: any): any {
+    if (typeof value === "string" && value.startsWith("$")) {
+        const key = value.slice(1);
+        if (!Object.prototype.hasOwnProperty.call(aliases, key)) throw new Error(`未知或前向 ref：${value}`);
+        return aliases[key];
+    }
+    return value;
+}
+
+function batchParams(params: any, aliases: any): any {
+    const value = JSON.parse(JSON.stringify(params));
+    if (value.target && value.target.id) value.target.id = batchReference(value.target.id, aliases);
+    for (const key of ["groupId", "relationTargetId"]) if (value[key] !== undefined) value[key] = batchReference(value[key], aliases);
+    if (Array.isArray(value.groupMemberIds)) value.groupMemberIds = value.groupMemberIds.map(id => batchReference(id, aliases));
+    return value;
+}
+
+function validateBatch(params: any, doc: any): void {
+    if (!Array.isArray(params.operations) || params.operations.length < 1 || params.operations.length > 200) throw new Error("operations 必须包含 1..200 项");
+    if (JSON.stringify(params.operations).length > 262144) throw new Error("批量计划超过 256 KiB 字符限制");
+    for (const key of ["save", "dryRun", "verbose"]) if (params[key] !== undefined && typeof params[key] !== "boolean") throw new Error(`${key} 必须是布尔值`);
+    const aliases: any = Object.create(null), names = new Set<string>();
+    for (let i = 0; i < doc.content.numChildren; i++) names.add(String(doc.content.GetChildAt(i).name));
+    params.operations.forEach((op, index) => {
+        if (!op || typeof op !== "object" || Array.isArray(op) || Object.keys(op).some(key => ["action", "params", "ref"].indexOf(key) < 0)
+            || !Object.prototype.hasOwnProperty.call(BATCH_FIELDS, op.action)) throw new Error(`第 ${index} 项不是允许的批量操作`);
+        const value = op.params;
+        if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => BATCH_FIELDS[op.action].indexOf(key) < 0))
+            throw new Error(`第 ${index} 项包含未知或禁止参数（禁止单步保存/切换文档/资源写入）`);
+        const creates = op.action === "create_object" || op.action === "insert_object";
+        if (op.ref !== undefined && (!creates || typeof op.ref !== "string" || !/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(op.ref) || Object.prototype.hasOwnProperty.call(aliases, op.ref)))
+            throw new Error(`第 ${index} 项 ref 无效或重复`);
+        if (BATCH_FIELDS[op.action].indexOf("target") >= 0) {
+            validateBatchTarget(value.target);
+            const id = value.target.id;
+            if (typeof id === "string" && id.startsWith("$")) batchReference(id, aliases);
+            else requireOwnedEditingTarget(doc, resolveObject(doc, value.target), op.action === "set_properties" || op.action === "set_scroll_settings");
+        }
+        for (const key of ["groupId", "relationTargetId"]) if (typeof value[key] === "string" && value[key].startsWith("$")) batchReference(value[key], aliases);
+        if (value.groupMemberIds !== undefined) {
+            if (!Array.isArray(value.groupMemberIds)) throw new Error("groupMemberIds 必须是数组");
+            value.groupMemberIds.forEach(id => {
+                if (typeof id === "string" && id.startsWith("$")) batchReference(id, aliases);
+                else requireOwnedEditingTarget(doc, resolveObject(doc, { id }), false);
+            });
+        }
+        if (op.action === "set_properties" && (!value.properties || typeof value.properties !== "object" || Array.isArray(value.properties)
+            || Object.keys(value.properties).some(key => !Object.prototype.hasOwnProperty.call(writableProperties, key) && key !== "autoSize"))) throw new Error("properties 包含未知字段");
+        if (op.action === "create_object" && ["text", "richtext", "inputtext", "loader", "list", "group", "graph"].indexOf(value.objectType) < 0) throw new Error("不支持此原生节点类型");
+        if (op.action === "insert_object") {
+            const item = resolveItem(value);
+            if ([FairyEditor.FPackageItemType.IMAGE, FairyEditor.FPackageItemType.COMPONENT].indexOf(item.type) < 0) throw new Error("批量插入仅允许 Image/Component；复杂资源使用专用入口");
+        }
+        if (creates && value.name) {
+            if (typeof value.name !== "string" || /[\/\x00-\x1f]/.test(value.name) || names.has(value.name)) throw new Error("创建名称无效或同层重复");
+            names.add(value.name);
+        }
+        if (op.ref !== undefined) aliases[op.ref] = true;
+    });
+}
+
+function batchReceiptPath(key: any): string {
+    if (typeof key !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(key)) throw new Error("operationKey 必须为 1..96 位字母数字、横线或下划线");
+    return IOPath.Combine(IOPath.GetDirectoryName(instanceStatusFile), "batch-results", `${key}.json`);
+}
+
+function compactBatchReceipt(receipt: any, verbose: boolean): any {
+    const result: any = { operationKey: receipt.operationKey, documentUrl: receipt.documentUrl, status: receipt.status,
+        completed: receipt.results.length, total: receipt.total, aliases: receipt.aliases, saved: Boolean(receipt.saved), persisted: Boolean(receipt.persisted),
+        revision: receipt.revision, error: receipt.error || null, mutationMayHaveOccurred: Boolean(receipt.mutationMayHaveOccurred),
+        agentUndoSupported: false, note: "批量不是原子事务；失败停止且不自动回滚。仅显式整批 save；保存阶段错误以 saved/persisted 为准。超时先查询 operationKey。" };
+    if (verbose) result.results = receipt.results;
+    else result.changed = receipt.results.filter(value => value.result.changed !== false).length;
+    return result;
+}
+
+function getBatchResult(params: any): any {
+    const path = batchReceiptPath(params.operationKey);
+    if (!IOFile.Exists(path)) return { operationKey: params.operationKey, status: "unknown", retrySafe: false, note: "仅当前 Editor 进程实例回执有效；unknown 不代表未执行。" };
+    const receipt = JSON.parse(IOFile.ReadAllText(path));
+    if (params.documentUrl !== receipt.documentUrl) throw new Error("回执不属于目标文档");
+    return compactBatchReceipt(receipt, params.verbose === true);
+}
+
+function stablePlan(value: any): string {
+    if (Array.isArray(value)) return `[${value.map(stablePlan).join(",")}]`;
+    if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stablePlan(value[key])}`).join(",")}}`;
+    return JSON.stringify(value);
+}
+
+function applyBatch(params: any, request: AgentRequest): any {
+    const path = batchReceiptPath(params.operationKey);
+    const fingerprint = stablePlan({ documentUrl: params.documentUrl, expectedRevision: params.expectedRevision, operations: params.operations, save: params.save === true });
+    if (IOFile.Exists(path) && params.dryRun !== true) {
+        const receipt = JSON.parse(IOFile.ReadAllText(path));
+        if (receipt.fingerprint !== fingerprint) verificationError("operation_key_reused", "operationKey 已绑定其他参数；请使用新的操作键", {});
+        return { ...compactBatchReceipt(receipt, params.verbose === true), replayed: true };
+    }
+    if (typeof params.expectedRevision !== "string" || !params.expectedRevision) throw new Error("批量操作必须提供读取时的 expectedRevision");
+    const doc = guardedDocument(params.documentUrl, params.expectedRevision);
+    validateBatch(params, doc);
+    if (params.dryRun === true) return { status: "preflight", total: params.operations.length, revision: documentRevision(doc), mutationPerformed: false,
+        note: "仅预检结构、作用域与引用；动态原生属性约束在执行时校验，不保证整批原子性。" };
+    const receipt: any = { operationKey: params.operationKey, documentUrl: params.documentUrl, fingerprint, status: "running", total: params.operations.length,
+        results: [], aliases: Object.create(null), saved: false, persisted: false, mutationMayHaveOccurred: true };
+    ensureDirectory(IOPath.GetDirectoryName(path));
+    writeJsonAtomic(path, receipt); // Write before the first mutation: an interrupted execution can never silently replay.
+    try {
+        params.operations.forEach((operation, index) => {
+            guardedDocument(params.documentUrl);
+            const value = { ...batchParams(operation.params, receipt.aliases), save: false };
+            if (operation.action === "insert_object") value.fixSpine = false;
+            receipt.mutationMayHaveOccurred = true;
+            const result = handleCommand({ ...request, action: operation.action, params: value });
+            if (result && typeof result.then === "function") throw new Error("批量不支持异步操作");
+            if (operation.ref) {
+                const id = result.target && result.target.id || result.id;
+                if (!id) throw new Error("原生创建未返回对象 ID");
+                receipt.aliases[operation.ref] = String(id);
+            }
+            receipt.results.push({ index, action: operation.action, ref: operation.ref, result });
+            writeJsonAtomic(path, receipt);
+        });
+        if (params.save === true) {
+            // Empty groups are omitted by native serialization, so validate them before the only save.
+            for (let index = 0; index < doc.content.numChildren; index++) {
+                const obj = doc.content.GetChildAt(index);
+                if (String(obj.objectType) === "group") {
+                    let members = 0;
+                    for (let i = 0; i < doc.content.numChildren; i++) if (doc.content.GetChildAt(i).groupId === obj.id) members++;
+                    if (!members) throw new Error("空分组不能持久化；批量未保存");
+                }
+            }
+            const expected = gearXmlData(doc.content.Write_editMode());
+            doc.Save(); receipt.saved = !doc.isModified;
+            if (!receipt.saved || !valuesEqual(expected, gearXmlData(componentXmlNode(doc, doc.content)))) throw new Error("批量保存后的 XML 与原生快照不一致");
+            receipt.persisted = true;
+            clearAgentHistory(); untrackedDocumentVersions.delete(doc);
+        }
+        receipt.status = "succeeded";
+    } catch (error) {
+        receipt.status = "failed";
+        receipt.error = { index: receipt.results.length, code: error.code || "batch_failed", message: String(error), details: error.details || null };
+    }
+    receipt.revision = documentRevision(doc);
+    writeJsonAtomic(path, receipt);
+    return compactBatchReceipt(receipt, params.verbose === true);
+}
+
+function captureStates(params: any, requestId: string): any {
+    const doc = guardedDocument(params.documentUrl), states = params.states;
+    const snapshotBefore = editorDocumentSnapshot(doc);
+    if (!Array.isArray(states) || states.length < 1 || states.length > 12) throw new Error("states 必须包含 1..12 项");
+    const originals: any = Object.create(null), labels = new Set<string>();
+    const prepared = states.map(state => {
+        if (!state || Object.keys(state).some(key => ["label", "controllers"].indexOf(key) < 0) || typeof state.label !== "string" || !state.label.trim() || state.label.length > 80 || labels.has(state.label)) throw new Error("状态标签必须非空、唯一且最多 80 字符");
+        labels.add(state.label);
+        if (!state.controllers || typeof state.controllers !== "object" || Array.isArray(state.controllers)) throw new Error("controllers 必须是名称到页面 ID 的对象");
+        const changes = Object.keys(state.controllers).map(name => {
+            const controller = resolveController(doc, name), page = resolveControllerPage(controller, { pageId: state.controllers[name] });
+            if (!Object.prototype.hasOwnProperty.call(originals, name)) originals[name] = { controller, index: controller.selectedIndex };
+            return { controller, index: page.index };
+        });
+        return { label: state.label, controllers: state.controllers, changes };
+    });
+    const captures = [], restoreErrors = [];
+    let failure: any = null;
+    try {
+        prepared.forEach((state, index) => {
+            guardedDocument(params.documentUrl);
+            Object.keys(originals).forEach(name => originals[name].controller.selectedIndex = originals[name].index);
+            state.changes.forEach(change => change.controller.selectedIndex = change.index);
+            const result = captureDocument({ scale: params.scale === undefined ? 0.5 : params.scale, expectedDocumentUrl: params.documentUrl }, `${requestId}-${index}`);
+            captures.push({ label: state.label, controllers: state.controllers, ...result });
+            if (result.visualVerificationStatus === "manual_required") throw new Error(result.reason);
+        });
+    } catch (error) { failure = String(error); }
+    finally {
+        for (const name of Object.keys(originals)) {
+            try { originals[name].controller.selectedIndex = originals[name].index; }
+            catch (error) { restoreErrors.push({ controller: name, error: String(error) }); }
+        }
+    }
+    const snapshotRestored = editorDocumentSnapshot(doc) === snapshotBefore;
+    return { documentUrl: params.documentUrl, captures, restored: restoreErrors.length === 0 && snapshotRestored, snapshotRestored, restoreErrors,
+        error: failure, modified: Boolean(doc.isModified), saved: false, visualVerificationStatus: failure || restoreErrors.length || !snapshotRestored ? "manual_required" : "pending_review" };
+}
+
+function beginExternalEdit(params: any, requestId: string): any {
+    const doc = guardedDocument(params.documentUrl);
+    if (doc.isModified) verificationError("document_dirty", "外部编辑交接前文档必须已保存；不会自动保存或放弃", {});
+    if (Object.keys(externalEditTickets).length >= 32) throw new Error("外部编辑令牌过多，请完成已有交接或重载插件");
+    const token = safeRequestId(requestId);
+    externalEditTickets[token] = { doc, url: params.documentUrl, snapshot: editorDocumentSnapshot(doc), file: String(doc.packageItem.file) };
+    return { token, documentUrl: params.documentUrl, file: String(doc.packageItem.file), revision: documentRevision(doc), modified: false,
+        note: "只读交接；可在已授权范围修改该 XML。完成后使用令牌重载，期间不要编辑此文档。" };
+}
+
+function finishExternalEdit(params: any): any {
+    const ticket = externalEditTickets[params.token];
+    if (!ticket) throw new Error("外部编辑令牌未知、已使用或插件已重载");
+    const doc = guardedDocument(params.documentUrl);
+    if (ticket.doc !== doc || ticket.url !== params.documentUrl || ticket.file !== String(doc.packageItem.file)) throw new Error("令牌与当前原生文档实例不一致");
+    if (editorDocumentSnapshot(doc) !== ticket.snapshot) verificationError("editor_changed", "交接期间 Editor 文档已变化，拒绝放弃内存内容", {});
+    if (doc.isModified && params.allowUnchangedDirty !== true) verificationError("document_dirty", "文档已标记 dirty；仅完整快照不变时可显式 allowUnchangedDirty", {});
+    const disk = String(IOFile.ReadAllText(ticket.file));
+    const xml = new (CS as any).FairyGUI.Utils.XML(disk);
+    if (String(xml.name) !== "component") throw new Error("外部 XML 根节点必须为 component");
+    const display = xml.GetNode("displayList"), ids = new Set<string>();
+    if (display) for (let index = 0; index < display.elements.Count; index++) {
+        const id = String(display.elements.get_Item(index).GetAttribute("id") || "");
+        if (!id || ids.has(id)) throw new Error("外部 XML 存在空或重复控件 ID，拒绝重载");
+        ids.add(id);
+    }
+    doc.DiscardChanges();
+    if (String(IOFile.ReadAllText(ticket.file)) !== disk) throw new Error("重载期间 XML 又发生变化，请重新核对磁盘与 Editor");
+    delete externalEditTickets[params.token];
+    clearAgentHistory(); untrackedDocumentVersions.delete(doc);
+    return { documentUrl: params.documentUrl, reloaded: true, modified: Boolean(doc.isModified), revision: documentRevision(doc), saved: false,
+        note: "仅重载已授权外部写入；未执行保存或发布。请使用 get_objects 和截图验收。" };
+}
+
 function handleCommand(request: AgentRequest): any {
     const action = String(request.action || "");
     const params = request.params || {};
@@ -3934,9 +4223,10 @@ function handleCommand(request: AgentRequest): any {
             throw new Error("请求目标工程与编辑器当前工程不一致，拒绝执行");
     }
 
-    if (loader3dBusy && ["ping", "get_project", "get_active_document", "list_packages", "list_items"].indexOf(action) < 0)
+    if (loader3dBusy && ["ping", "get_project", "get_active_document", "list_packages", "list_items", "get_batch_result"].indexOf(action) < 0)
         verificationError("document_busy", "Loader3D 加载中，请等待当前请求完成", {});
     const actionsBlockedDuringPublish: { [action: string]: boolean } = {
+        apply_batch: true, capture_states: true, begin_external_edit: true, finish_external_edit: true,
         set_image_settings: true, create_object: true, set_properties: true, set_button_binding: true, set_list_settings: true,
         set_scroll_settings: true, set_group: true, add_relation: true, remove_relation: true, set_loader: true,
         set_text_style: true, replace_object_resource: true,
@@ -3972,6 +4262,12 @@ function handleCommand(request: AgentRequest): any {
         throw new Error(`FairyGUI 发布进行中，暂不能执行：${action}`);
 
     switch (action) {
+        case "get_objects": return getObjects(params);
+        case "apply_batch": return applyBatch(params, request);
+        case "get_batch_result": return getBatchResult(params);
+        case "capture_states": return captureStates(params, request.id || String(Date.now()));
+        case "begin_external_edit": return beginExternalEdit(params, request.id || String(Date.now()));
+        case "finish_external_edit": return finishExternalEdit(params);
         case "get_image_settings": return { settings: imageSettings(resolveItem(params)), scope: "package" };
         case "set_image_settings": return setImageSettings(params);
         case "create_object": return createObject(params);
@@ -4312,6 +4608,8 @@ function completeRequestSuccess(claimedPath: string, requestId: string, action: 
         result,
         timestamp: nowIso()
     };
+    const timing = requestExecutionTimings[requestId];
+    if (timing) { response.timing = { queueWaitMs: timing.queueWaitMs, executionMs: Date.now() - timing.started }; delete requestExecutionTimings[requestId]; }
     writeJsonAtomic(IOPath.Combine(replyFolder, `${requestId}.json`), response);
     appendLog(`ok ${requestId} ${action}`);
     if (IOFile.Exists(claimedPath))
@@ -4334,6 +4632,8 @@ function completeRequestError(claimedPath: string, requestId: string, action: st
         error: { code: error && error.code ? String(error.code) : code, message, stack, details: error && error.details ? error.details : undefined },
         timestamp: nowIso()
     };
+    const timing = requestExecutionTimings[requestId];
+    if (timing) { response.timing = { queueWaitMs: timing.queueWaitMs, executionMs: Date.now() - timing.started }; delete requestExecutionTimings[requestId]; }
     writeJsonAtomic(IOPath.Combine(replyFolder, `${requestId}.json`), response);
     appendLog(`error ${requestId} ${action}: ${message}`);
     App.consoleView.LogError(`[FGUI Agent Bridge] ${action}: ${message}`);
@@ -4363,6 +4663,8 @@ function processRequestFile(sourcePath: string): void {
         request = JSON.parse(IOFile.ReadAllText(claimedPath));
         requestId = safeRequestId(String(request.id || requestId));
         action = String(request.action || "unknown");
+        const received = Date.now(), created = Number(requestId.split("-")[0]);
+        requestExecutionTimings[requestId] = { started: received, queueWaitMs: Number.isFinite(created) ? Math.max(0, received - created) : 0 };
 
         const result = handleCommand(request);
         if (result && typeof result.then === "function") {

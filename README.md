@@ -2,11 +2,11 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.9.0`
+- **版本**：`0.10.0`
 - **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
-- **MCP 工具数**：73；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
+- **MCP 工具数**：80；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
 
 > **说明**：Bridge 仓库与业务 FairyGUI 工程分开存放。FairyGUI 工程只需安装轻量插件；在宿主 IDE 中可按需安装 Skill 提高 AI 操作准确率。
 
@@ -298,6 +298,7 @@ uv run fgui-agent preview-transition play fadeIn
 | 类别 | 工具名称 | 功能描述 |
 | :--- | :--- | :--- |
 | **连接与定位** | `fgui_status`、`fgui_ping`、`fgui_use_project`、`fgui_get_project`、`fgui_list_packages`、`fgui_list_items` | 检查连接状态、动态切换工程、查看包列表与包内资源 |
+| **批量与交接** | `fgui_get_objects`、`fgui_apply_batch`、`fgui_get_batch_result`、`fgui_capture_states`、`fgui_begin_external_edit`、`fgui_finish_external_edit`、`fgui_diagnostics` | 一次请求执行跨对象计划、紧凑读取、多状态联系图、XML 交接及内部计时 |
 | **文档与对象** | `fgui_open_document`、`fgui_get_active_document`、`fgui_get_tree`、`fgui_select_object`、`fgui_insert_object`、`fgui_set_property`、`fgui_remove_object` | 打开组件、查看对象树、选中元件、修改属性及增删显示对象 |
 | **资源创建/导入** | `fgui_create_component`、`fgui_create_button`、`fgui_import_image`、`fgui_import_font`、`fgui_import_sound` | 新建组件/按钮，从本地绝对路径导入图片、字体与声音 |
 | **MovieClip 序列帧** | `fgui_create_movieclip`、`fgui_get_movieclip`、`fgui_update_movieclip`、`fgui_remove_movieclip` | 从本地图片序列创建/更新序列帧动画（直接嵌入 `.jta`） |
@@ -314,6 +315,10 @@ uv run fgui-agent preview-transition play fadeIn
 | **二维 Loader** | `fgui_get_loader`、`fgui_set_loader` | 等比适配、对齐与自动尺寸 |
 
 这些编辑接口只作用于当前文档直属对象；ScrollPane 支持根组件或原生 List。`save=true` 保存整个组件并回读原生 XML；九宫格属于图片资源元数据，会保存整个所属包并影响所有引用。Editor 不保存空分组，创建并保存分组时必须指定 `group_member_ids`。没有完整 Agent 撤销，失败不会自动回滚。
+
+整页布局优先使用 `fgui_get_objects → fgui_apply_batch → fgui_capture_states`：批量绑定目标文档/revision，Editor 分配新控件 ID，按操作键查询回执以避免超时重复创建。默认摘要返回、不保存；失败停止但不是原子回滚。多状态返回一张编号联系图，完整标签和原图路径在 metadata 中。详见[批量计划示例](.agents/skills/fgui-agent-bridge/references/editing-plans.md)和[方案/验收](docs/performance-plan.md)。
+
+已明确授权直接编辑 XML 时，用 `fgui_begin_external_edit` 取得干净文档交接令牌，外部写入后用 `fgui_finish_external_edit` 在完整内存快照未变的条件下重载。不会自动保存、发布或覆盖外部文件。素材规划可用 `uv run python scripts/inspect_design_assets.py PATH` 读取 PNG 可见边界；PSD 结构读取需先 `uv sync --extra design`。
 
 批量几何设置先预检自动尺寸与源尺寸约束，再设置 Pivot/尺寸，最后设置坐标；调用方 JSON 顺序不会改变结果。文本描边/阴影参数需显式启用对应效果。`fgui_list_items` 返回 `{package, items}` 对象；`fgui_verify_document` 支持引用组件省略的默认尺寸和文本效果属性。GearColor 本身已支持描边色，Gear 最终外观仍受自动尺寸、布局和所选控制器页影响。
 
