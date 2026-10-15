@@ -59,6 +59,8 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 
 安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
+当前发布版本为 `0.10.0`，对应 Git 标签 `v0.10.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+
 ### 方式一：AI 智能安装（推荐）
 
 将下面的提示词发送给能够操作本地终端和文件的 AI 编程 Agent（如 Cursor、Claude Code、Codex 等）：
@@ -67,10 +69,11 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
 源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
+安装版本：0.10.0，Git 标签 v0.10.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
-同步 Skill，将仓库根目录的 FairyGUI-Editor-操作规范.md 复制到目标代码仓库根目录，并将引用合入已有 AGENTS.md，不覆盖原有约定。
+同步 Skill，将仓库根目录的 FairyGUI-Editor-操作规范.md 复制到目标代码仓库根目录，并将引用合入已有 AGENTS.md，保留项目已有的固定版本及其他约定。
 共享 codex-fgui-project.example.toml 模板；实际 .codex/config.toml 中的 fgui 片段在本机 MCP 安装配置就绪后合入，不提交到团队自动加载的配置中。
 ```
 
@@ -83,10 +86,20 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
-git clone https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.10.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
+
+检出标签后处于 detached HEAD 是固定版本安装的正常状态。已有 Bridge 安装先运行 `git status --short` 核对并保留未提交改动，再切换到项目指定的标签：
+
+```bash
+git fetch origin tag v0.10.0
+git switch --detach v0.10.0
+uv sync --frozen
+```
+
+随后同步目标工程插件与 Skill。安装后同时核对 MCP 和插件都是项目指定版本；`versionMatch=true` 只证明两端相同，不能替代项目固定版本检查。
 
 #### 2. 安装 FairyGUI Editor 插件
 
@@ -232,7 +245,9 @@ uv run python scripts/sync_to_project.py \
 
 以下命令在从当前仓库克隆的 Bridge 目录中执行。`--pull` 沿用当前分支的跟踪远端，不会自动切换仓库；可用 `git remote -v` 核对地址。若此前从其他仓库安装，建议按上文将当前仓库克隆到新目录，再把 MCP 配置中的 Bridge 路径改为新目录，并重新同步插件与 Skill。
 
-当 Bridge 源仓库有功能更新或 Bug 修复时，可通过一条命令自动从源仓库安全拉取最新代码（`git pull --ff-only`）、同步 Python 环境（`uv sync`），并将最新插件与 Skill 刷新到目标工程：
+**固定发布版本的项目**按上文 fetch 并检出指定标签、执行 `uv sync --frozen`，再运行同步命令，省略 `--pull`。升级到其他版本前先明确调整项目版本约定；不要自动跟随 main 或开发分支，也不要在 detached HEAD 上执行 `--pull`。
+
+以下 `--pull` 命令仅用于没有固定版本、明确跟踪开发分支的安装，可安全拉取该分支最新代码（`git pull --ff-only`）、同步 Python 环境（`uv sync`）并刷新插件与 Skill：
 
 ```bash
 # 从源仓库拉取最新代码并同步到 FairyGUI 工程与业务代码仓库

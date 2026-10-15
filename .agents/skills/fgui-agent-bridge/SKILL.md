@@ -34,8 +34,9 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 ### 0. 检查更新与同步（按需）
 
 - 当用户要求“检查更新”、“拉取最新 Bridge 版本”，或 `fgui_status` 返回 `versionMatch: false` / 协议不兼容提示时：
-  1. 运行 `uv run python scripts/sync_to_project.py --pull --project PATH --skill-root PATH --apply`（或 `uv run fgui-agent update --pull --apply`）；
-  2. 若插件更新，提醒用户在 FairyGUI Editor 中重新打开工程生效。
+  1. 先读取目标项目操作规范中的版本约定；固定标签的项目按安装章节检出指定标签并更新依赖，再同步插件与 Skill，省略 `--pull`，不自动改变项目约定。
+  2. 仅未固定版本且明确跟踪开发分支的安装使用 `uv run python scripts/sync_to_project.py --pull --project PATH --skill-root PATH --apply`（或 `uv run fgui-agent update --pull --apply`）。
+  3. 若插件更新，提醒用户在 FairyGUI Editor 中重新打开工程生效。
 
 ### 1. 连接与定位
 
@@ -117,13 +118,15 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 脚本会先校验所选目录，再写入目标工程的 `plugins/agent-bridge/`；无效目录或取消选择时不得写入。自动化环境可改用 `--project PATH --apply`。
 
-首次安装先克隆当前仓库并准备 Python 环境；前述同步命令均在该仓库目录执行：
+首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.10.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
 
 ```bash
-git clone https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.10.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
+
+已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.10.0`、`git switch --detach v0.10.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
 
 Codex 安装采用两层配置，完整示例见源仓库 README 的安装指南：
 
@@ -153,7 +156,7 @@ cp -R .agents/skills/fgui-agent-bridge \
 
 ### 同步与更新脚本
 
-`scripts/sync_to_project.py` 支持目录选择和显式路径，两种方式都默认 dry-run，必须传入 `--apply` 才写入；支持 `--pull` 自动从源仓库拉取最新代码并同步 Python 环境：
+`scripts/sync_to_project.py` 支持目录选择和显式路径，两种方式都默认 dry-run，必须传入 `--apply` 才写入。固定版本先检出项目指定标签、执行 `uv sync --frozen`，再同步，省略 `--pull`；下面的 `--pull` 示例只用于未固定版本且明确跟踪开发分支的安装：
 
 ```bash
 # 打开目录选择器并安装插件
@@ -170,7 +173,7 @@ uv run python scripts/sync_to_project.py \
 uv run fgui-agent --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT update --pull --apply
 ```
 
-`--pull` 使用本地分支的跟踪远端，不会自动切换源仓库。从其他仓库迁移时，按上述地址另行克隆、更新 MCP 的 Bridge 路径，再同步插件与 Skill。
+`--pull` 使用本地分支的跟踪远端，不会自动切换源仓库或发布标签；detached HEAD 上不使用 `--pull`。从其他仓库迁移时，按上述地址和项目指定标签另行克隆、更新 MCP 的 Bridge 路径，再同步插件与 Skill。
 
 `--project` 与 `--choose-project` 互斥。脚本不创建 Git 元数据、不复制缓存、不删除目标目录中的其他文件。若更新了插件文件，需重新打开 FairyGUI Editor 工程加载。
 
