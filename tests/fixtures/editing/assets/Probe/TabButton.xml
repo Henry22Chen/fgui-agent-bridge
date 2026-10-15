@@ -1,0 +1,1 @@
+<component size="100,40" extention="Button"><controller name="button" pages="0,up,1,down,2,over,3,selectedOver"/><displayList><text id="title" name="title" xy="0,0" size="100,40" fontSize="20" autoSize="none" text="Tab"/></displayList><Button mode="Radio"/></component>

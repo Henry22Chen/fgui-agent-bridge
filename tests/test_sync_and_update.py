@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -17,6 +18,18 @@ from fairygui_agent.project_locator import ProjectContext
 
 
 class TestSyncAndUpdate(unittest.TestCase):
+    def test_same_size_same_mtime_rewrite_is_not_hidden_by_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source, destination = Path(temp_dir) / "source", Path(temp_dir) / "destination"
+            source.write_bytes(b"hello")
+            destination.write_bytes(b"hello")
+            entry = sync_mod.CopyEntry(source, destination)
+            original = destination.stat()
+            self.assertEqual(sync_mod.classify(entry), "UNCHANGED")
+            destination.write_bytes(b"world")
+            os.utime(destination, ns=(original.st_atime_ns, original.st_mtime_ns))
+            self.assertEqual(sync_mod.classify(entry), "UPDATE")
+
     def test_classify_entries(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

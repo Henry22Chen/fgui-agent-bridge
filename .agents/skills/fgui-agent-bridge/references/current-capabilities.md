@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.9.0`
+- Bridge 版本：`0.10.0`
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：73；`fgui_status` 和 `fgui_use_project` 为 Python 本地能力
+- MCP 工具数：80；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -32,6 +32,11 @@
 | `fgui_create_button` | 包、名称、尺寸、模式、状态图片、目录 | 创建 Common/Check/Radio 标准 Button |
 | `fgui_create_movieclip` | 包、名称、有序 `frame_paths`、FPS、延迟、Swing、目录 | 从本地图片序列创建/替换 MovieClip |
 | `fgui_get_movieclip` / `fgui_update_movieclip` / `fgui_remove_movieclip` | MovieClip 资源定位；更新可传帧、FPS、Speed、延迟、Swing | 读取、更新或显式强制删除 MovieClip |
+| `fgui_get_objects` | document_url, targets, fields? | 指定字段批量读取根/直属对象并取 revision，空 targets 仅取 revision |
+| `fgui_apply_batch` / `fgui_get_batch_result` | document_url, expected_revision, operation_key, operations, dry_run=false, save=false, verbose=false / document_url, operation_key, verbose=false | 一条请求 1..200 项；默认摘要；失败/超时查回执，非原子事务 |
+| `fgui_capture_states` | document_url, states, scale=0.5, columns=3, max_cell=640 | 一次 1..12 个设计态截图及恢复，返回编号联系图与标签映射 |
+| `fgui_begin_external_edit` / `fgui_finish_external_edit` | document_url / document_url, token, allow_unchanged_dirty=false | 干净文档交接与完整快照未变时重载；不自动写 XML/保存 |
+| `fgui_diagnostics` | limit=20（1..100） | 当前 MCP 进程内部计时/字节，既不唤醒也不包含调用端耗时 |
 | `fgui_get_active_document` / `fgui_get_tree` | 无 / `max_depth` | 读取活动文档或对象树 |
 | `fgui_select_object` / `fgui_set_property` | ID、路径或唯一名称 | 选择对象或修改白名单属性 |
 | `fgui_replace_object_resource` | target、resource_url、expected_type、state?、save? | 通过 Editor API 替换 Image/Loader 资源引用，不支持 Button state |
@@ -45,7 +50,7 @@
 | `fgui_get_group` / `fgui_set_group` | target；修改 `group_id`, save=false | 设置同层分组，空串解除，拒绝循环 |
 | `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation` | target；修改 `relation_type`, `relation_target_id=parent`, `use_percent=false`（add）, save=false | 读取可用类型；增删单条关系并保留同目标其它关系，拒绝循环和继承只读关系 |
 | `fgui_get_loader` / `fgui_set_loader` | target；修改 `settings`, save=false | 二维 Loader：`fill`、`align/vAlign`、`autoSize`、`shrinkOnly`、`useResize` |
-| `fgui_verify_document` | `max_depth`, target?, `expected?`, `read_xml=true` | 无 expected 为快照；有 expected 时比对 Editor/磁盘 XML |
+| `fgui_verify_document` | `max_depth`, target?, `expected?`, `read_xml=true`, `include_tree?` | 无 expected 为快照；有 expected 时默认省略树，仅比对 Editor/磁盘 XML |
 | `fgui_insert_object` / `fgui_remove_object` | 资源 URL、坐标 / 目标 | 插入已有资源或删除非根对象 |
 | `fgui_get_loader3d` / `fgui_set_loader3d` | 对象定位；读取 `include_asset_info=true`；修改 `resource_url?`, `animation_name?`, `skin_name?`, `playing?`, `loop?`, `frame?`, `save=false`, `verify=true`, `skip_name_validation=false`, `fix_spine=true` | 读取/修改直属 Loader3D 的包内 Spine；省略保持，空字符串清除 |
 | `fgui_fix_spine_anchor` | `url?` 或 `package_name` + `item_name/item_path` | 修复 Spine 包围盒、锚点及 PMA，保存包元数据 |
@@ -64,6 +69,9 @@
 | `fgui_get_publish_settings` / `fgui_publish` | 包名? / 范围、包、分支、保存策略 | 读取或执行现有发布配置；发布前自动将 1920×1080/2K 级大图设置为 FairyGUI `alone` 纹理集，避免与小图混排 |
 
 ## 组件与动画语义
+
+- **计划与性能**：批量只操作一个活动文档，必须匹配 revision；允许操作/原生参数见[计划示例](editing-plans.md)。ref 仅用于创建，引用必须向后使用；Editor 分配 ID。dry_run 只预检结构/作用域/引用，动态原生约束执行时校验。单步保存、导入发布、切换文档、任意脚本均禁止。失败停止、不自动保存/回滚；同操作键同参数只返回回执，不重复创建。回执仅限同 Editor 进程，unknown/running 不代表可安全重试。
+- **外部编辑与预览**：XML 交接令牌绑定原生文档和完整快照，Editor 有新内容时拒绝重载；allow_unchanged_dirty 只能在完整快照一致时显式使用。多状态截图逐状态从原控制器基线开始，finally 恢复并回读完整快照；只适用普通设计编辑态，不承诺恢复运行预览业务副作用。
 
 - **原生编辑**：只修改当前文档直属对象，嵌套定义先打开所属组件；ScrollPane 仅允许根组件或原生 List。按钮绑定引用父控制器名称和稳定页面 ID，不重写父控制器首页。分组边界由成员决定，空分组不会被 Editor 保存；创建并保存时需传成员。新接口实际修改清除旧 Agent 历史，无完整结构撤销，失败返回可能已发生的修改，不伪称回滚。
 - **布局配置**：List layout 为 `column/row/flow_hz/flow_vt/pagination`，repeatX/Y 为列数/行数（0 自动计算），分页还需配置 ScrollPane。overflow 为 `visible/hidden/scroll`，scroll 为 `horizontal/vertical/both`，scrollBarDisplay 为 `default/visible/auto/hidden`；pageMode 只修改对应位并保留其它 scrollBarFlags。Loader fill 为 `none/scale/scaleMatchHeight/scaleMatchWidth/scaleFree/scaleNoBorder`，`scale` 为等比适配。
@@ -114,6 +122,7 @@
 - 基础：`status`、`ping`、`project`、`packages`、`items`、`open`、`active`、`tree`、`select`、`set`、`insert`、`remove`
 - 资源：`create-component`、`create-button`、`import-image`、`import-font`、`import-sound`、`create-movieclip`、`get-movieclip`、`update-movieclip`、`remove-movieclip`、`get-loader3d`、`set-loader3d`、`fix-spine-anchor`
 - Transition：`transitions`、`get-transition`、`upsert-transition`、`remove-transition`、`add-transition-item`、`update-transition-item`、`remove-transition-item`
+- 计划与交接：`get-objects`、`apply-batch PLAN.json`、`get-batch-result`、`capture-states`、`begin-external-edit`、`finish-external-edit`、`diagnostics`。批量计划字段使用 Bridge camelCase，全局 --timeout 仍在命令前。
 - 属性与验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`set-properties`、`verify-document`、`capture-document`
 - 原生布局：`create-object`、`get-image-settings/set-image-settings`、`get-button-binding/set-button-binding`、`get-list-settings/set-list-settings`、`get-scroll-settings/set-scroll-settings`、`get-loader/set-loader`、`get-group/set-group`、`get-relations/add-relation/remove-relation`
 - 状态编辑：`controllers`、`create-controller`、`add-controller-page`、`rename-controller-page`、`set-controller-page`、`get-gears`、`set-gear`、`get-controller-actions`、`upsert-controller-action`、`remove-controller-action`

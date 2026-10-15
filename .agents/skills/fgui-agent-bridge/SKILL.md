@@ -43,9 +43,13 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 2. 定位失败或目标不符时，在当前副本查找 `.fairy` 并以绝对路径调用 `fgui_use_project`；多个候选且无法判断时询问用户。不要依赖 Bridge 递归查找 `UIProject`，其目录定位只检查直接 `.fairy` 和固定 `FairyGUI/FairyGUI.fairy`。
 3. 需要唤醒或验证编辑器时调用 `fgui_ping`。Windows 复用必须核对插件当前工程目录、PID、进程启动时间和真实 exe，不凭窗口标题或启动参数判断。身份不明或目标工程存在多个实例时停止调用，要求用户确认目标实例；不要以重复 ping 尝试开窗。慢响应和超时不会启动新实例。
 4. 不知道包名时先 `fgui_list_packages`；不知道资源时用 `fgui_list_items`。
-5. 打开组件后先确认活动文档，再读取对象树。修改优先使用稳定对象 ID，其次对象路径；只有名称唯一时才使用名称。
+5. 打开组件后先确认活动文档。整页布局先按设计稿整理坐标、字体和素材 alpha 可见边界（可用 `scripts/inspect_design_assets.py`），再用 `fgui_get_objects` 按对象/字段读取及取得 revision；仅在定位未知结构时读浅层对象树。修改优先使用稳定对象 ID，其次对象路径；只有名称唯一时才使用名称。
 
 ### 2. 创建、修改和保存
+
+- 多对象计划优先 `fgui_apply_batch`，不要在 exec 内循环调用逐属性 MCP。明确 document_url、expected_revision 和 operation_key；默认摘要、不保存，创建 ref 后用 `$ref` 引用 Editor 分配的 ID。先检查 status，失败可部分执行；超时先 `fgui_get_batch_result`，unknown 不代表未执行。格式见[计划示例](references/editing-plans.md)。
+- 按明确状态矩阵用 `fgui_capture_states` 一次截图并恢复指定控制器，联系图编号对应 metadata 标签；集中比较同画布/同状态，不能把生成图当视觉通过。
+- 用户已明确授权 XML 编辑时，先 `fgui_begin_external_edit` 交接干净文档；外部写入后 `fgui_finish_external_edit` 仅在完整内存快照未变时重载。陌生 dirty 修改不得覆盖；不自动保存或发布。调用计时看 `fgui_diagnostics`，它不包含调用端或模型耗时。
 
 - 新建组件使用 `fgui_create_component`，明确包、目录、名称、宽高、导出状态和冲突策略。
 - 原生 Text/RichText/InputText/Loader/List/Group/Graph 使用 `fgui_create_object`，创建到当前文档根下。保存分组必须传 `group_member_ids`，分组边界由成员决定；默认不保存，无完整结构撤销。
@@ -62,7 +66,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - Spine：先 `fgui_get_loader3d` 再 `fgui_set_loader3d`；仅编辑直属 Loader3D 的已有包内资源。导入后的修复用 `fgui_fix_spine_anchor`；绑定/插入时默认修复，包保存边界见下文。
 - 状态编辑：先读取 `fgui_get_controllers` / `fgui_get_gears` / `fgui_get_controller_actions`，再编辑页面、Gear 或联动。页面优先用稳定 ID；Gear set 完整替换单个 Gear，Action upsert 省略索引为追加、指定索引为完整替换单条，增删后重读索引。作用于当前根控制器或直属对象；联动可引用直属子组件，不写子组件资源。具体格式见能力参考。
 - 属性修改（如 `text`、`icon`、`font` 等白名单属性）进入 Agent 属性事务栈；结构创建、插入和删除没有完整结构快照撤销。
-- 文档与持久化验证：使用 `fgui_verify_document` 重新读取活动文档对象树并可传入 `target + expected` 比对组件 XML 磁盘持久化内容；无 `expected` 时仅作为对象树快照。
+- 文档与持久化验证：使用 `fgui_verify_document` 重新读取活动文档对象树并可传入 `target + expected` 比对组件 XML 磁盘持久化内容；无 `expected` 时仅作为对象树快照；指定 expected 时默认省略整树，需要时传 include_tree=true。
 - 保存使用 `fgui_save_document` 或 `fgui_save_all`；放弃全部未保存修改使用 `fgui_discard_document`。
 - 视觉检查用 `fgui_capture_document` 获取图像后实际观察资源、布局、遮挡与可见性，大体正确即可，不要求帧或像素一致。`pending_review` 尚未验收；缺图返回 `manual_required`，要求用户自行验证并保留修改，不因缺图 undo/discard。
 
@@ -198,7 +202,7 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
-- `0.9.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
+- `0.10.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。
