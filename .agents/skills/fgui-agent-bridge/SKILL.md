@@ -63,6 +63,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - 文本样式：使用 `fgui_get_text_style` / `fgui_set_text_style` 编辑字体、颜色、描边/阴影开关及参数、粗体/斜体/下划线、UBB、文本、对齐、间距和自动尺寸。描边/阴影参数需启用对应效果；显式尺寸与自动尺寸冲突时先拒绝。批量几何属性用 `fgui_set_properties`，先设置 Pivot/尺寸、最后写坐标，避免 JSON 顺序引发位移；暂不支持自动 external reload。
 - 图片缩放与九宫格用 `fgui_get_image_settings` / `fgui_set_image_settings`；这是影响所有引用的包级设置，`save=true` 保存整个所属包并回读，不等同于组件保存。
 - 按钮与父控制器的原生绑定用 `fgui_get_button_binding` / `fgui_set_button_binding`；List 布局用 `fgui_get_list_settings` / `fgui_set_list_settings`，ScrollPane 分页和控制器用 `fgui_get_scroll_settings` / `fgui_set_scroll_settings`。二维 Loader 布局用 `fgui_get_loader` / `fgui_set_loader`。
+- 列表项先 `fgui_get_list_item_resources`，再 `fgui_set_list_item_resources(settings)`；设置默认项资源，或用最终有序 `items` 清单新增、删除、重排、替换预置项资源及编辑名称/标题/图标、内部文本/图标和控制器覆盖。`sourceIndex` 引用调用前的原项，未提供属性保留；无索引为新增、遗漏为删除、`items=[]` 清空。支持批量，默认不保存，需要 `0.12.0` 或更高版本；格式和完整替换边界见[列表项编辑](references/list-items.md)。
 - 分组成员用 `fgui_get_group` / `fgui_set_group`，空 ID 解除分组；布局关系用 `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation`。只改当前文档直属对象及同层/父级引用，拒绝循环和继承只读关系；默认不保存，`save=true` 保存整个组件并核对原生 XML。
 - 实例配置先 `fgui_get_component_instance`，再用 `fgui_set_component_instance_controller` 或 `fgui_set_component_instance_property` 设置单个直属实例的控制器、文本/图标覆盖值；不为修改一个实例而打开并改写共享组件定义。控制器须已导出，内部属性须已暴露；字符串含空串，不支持 null 清除。
 - 组件定义用 `fgui_get_component_properties` / `fgui_upsert_component_property` / `fgui_remove_component_property` 管理当前根组件的文本(0)/图标(1)映射，内部路径用点号；控制器导出与备注用 `fgui_set_controller_properties(settings={exported,alias})`。实例与定义的五个写操作均可批量，说明见[组件属性](references/component-properties.md)。
@@ -120,15 +121,15 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 脚本会先校验所选目录，再写入目标工程的 `plugins/agent-bridge/`；无效目录或取消选择时不得写入。自动化环境可改用 `--project PATH --apply`。
 
-首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.11.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
+首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.12.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
 
 ```bash
-git clone --branch v0.11.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.12.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
 
-已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.11.0`、`git switch --detach v0.11.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
+已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.12.0`、`git switch --detach v0.12.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
 
 Codex 安装采用两层配置，完整示例见源仓库 README 的安装指南：
 
@@ -207,7 +208,7 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
-- `0.11.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
+- `0.12.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。

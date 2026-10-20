@@ -868,6 +868,23 @@ def fgui_set_list_settings(settings: dict[str, Any], object_id: str | None = Non
 
 
 @mcp.tool()
+def fgui_get_list_item_resources(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取直属 List 的 defaultItem、预置项资源/有效资源、名称/标题/图标及内部属性和控制器覆盖；不修改文档。"""
+    return _editing_call("get_list_item_resources", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_list_item_resources(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """编辑直属 List 的 defaultItem 和预置项。items 是最终有序清单：sourceIndex 引用调用前的项并保留未提供属性，无 sourceIndex 为新增，遗漏为删除；[] 清空。
+
+    项字段：url（空串继承默认项）、name/title/icon/selectedTitle/selectedIcon（空串清空）、properties（完整替换覆盖数组，省略则保留）。
+    property 格式为 {target, propertyId, value}，ID=-1/0/1 对应控制器/文本/图标；value 为字符串。资源必须是工程内组件 ui:// URL。
+    默认不保存；save=true 保存整个当前组件并核对 XML。没有完整 Agent 撤销；失败不自动回滚。
+    """
+    return _editing_call("set_list_item_resources", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
 def fgui_get_scroll_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
     """读取当前组件根或原生 List 的滚动、分页和分页控制器设置。"""
     return _editing_call("get_scroll_settings", object_id, object_path, object_name)

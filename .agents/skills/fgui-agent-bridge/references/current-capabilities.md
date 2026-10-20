@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.11.0`
+- Bridge 版本：`0.12.0`（Git 标签 `v0.12.0`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：87；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
+- MCP 工具数：89；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -46,6 +46,7 @@
 | `fgui_get_image_settings` / `fgui_set_image_settings` | 图片 url 或包/资源定位；修改 `settings`, save=false | 包级缩放/九宫格：`scaleMode=none/9grid/tile`、`scale9Grid={x,y,width,height}`、`gridTile=0..31` |
 | `fgui_get_button_binding` / `fgui_set_button_binding` | target；修改 `settings`, save=false | `controllerName`、`pageId`、`selected`；空控制器名清除绑定 |
 | `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | `layout`、`repeatX/repeatY`、`lineGap/columnGap`、`align/vAlign`、`autoResizeItem`、`selectionMode` |
+| `fgui_get_list_item_resources` / `fgui_set_list_item_resources` | target；修改 `settings={defaultItem?,items?}`, save=false | 默认项资源与预置项增删重排、资源/名称/标题/图标/属性覆盖；`sourceIndex` 保留原项，items 完整替换，详见[列表项编辑](list-items.md) |
 | `fgui_get_scroll_settings` / `fgui_set_scroll_settings` | target；修改 `settings`, save=false | 根组件或原生 List：`overflow`、`scroll`、`scrollBarDisplay`、`scrollBarFlags`、`pageMode`、`pageControllerName` |
 | `fgui_get_group` / `fgui_set_group` | target；修改 `group_id`, save=false | 设置同层分组，空串解除，拒绝循环 |
 | `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation` | target；修改 `relation_type`, `relation_target_id=parent`, `use_percent=false`（add）, save=false | 读取可用类型；增删单条关系并保留同目标其它关系，拒绝循环和继承只读关系 |
@@ -132,6 +133,7 @@
 - 计划与交接：`get-objects`、`apply-batch PLAN.json`、`get-batch-result`、`capture-states`、`begin-external-edit`、`finish-external-edit`、`diagnostics`。批量计划字段使用 Bridge camelCase，全局 --timeout 仍在命令前。
 - 属性与验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`set-properties`、`verify-document`、`capture-document`
 - 原生布局：`create-object`、`get-image-settings/set-image-settings`、`get-button-binding/set-button-binding`、`get-list-settings/set-list-settings`、`get-scroll-settings/set-scroll-settings`、`get-loader/set-loader`、`get-group/set-group`、`get-relations/add-relation/remove-relation`
+- 列表项：`get-list-item-resources`、`set-list-item-resources SETTINGS_JSON`；`--id/--path/--name` 定位直属 List，写入支持 `--save`。
 - 状态编辑：`controllers`、`create-controller`、`add-controller-page`、`rename-controller-page`、`set-controller-page`、`get-gears`、`set-gear`、`get-controller-actions`、`upsert-controller-action`、`remove-controller-action`
 - 预览：`preview-transition`、`preview-movieclip`
 - 保存发布：`save`、`discard`、`save-all`、`history`、`undo`、`redo`、`publish-settings`、`publish`

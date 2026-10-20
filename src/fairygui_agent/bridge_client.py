@@ -74,6 +74,7 @@ EDITING_CAPABILITIES = frozenset({"get_image_settings", "set_image_settings", "c
 PERFORMANCE_CAPABILITIES = frozenset({"apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit"})
 COMPONENT_PROPERTY_CAPABILITIES = frozenset({"get_component_instance", "set_component_instance_controller", "set_component_instance_property",
     "get_component_properties", "upsert_component_property", "remove_component_property", "set_controller_properties"})
+LIST_ITEM_CAPABILITIES = frozenset({"get_list_item_resources", "set_list_item_resources"})
 
 
 class BridgeError(RuntimeError):
@@ -246,6 +247,9 @@ class BridgeClient:
         requested = {action}
         if action == "apply_batch" and isinstance((params or {}).get("operations"), list):
             requested.update(op.get("action") for op in params["operations"] if isinstance(op, dict) and isinstance(op.get("action"), str))
+        missing = (requested & LIST_ITEM_CAPABILITIES) - set(status.get("capabilities", []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少列表项编辑能力：{', '.join(sorted(missing))}，请同步并重新加载 0.12.0 或更高版本插件。")
         missing = (requested & COMPONENT_PROPERTY_CAPABILITIES) - set(status.get("capabilities", []))
         if missing:
             raise BridgeError(f"FairyGUI Agent Bridge 缺少组件属性能力：{', '.join(sorted(missing))}，请同步并重新加载 0.11.0 或更高版本插件。")
