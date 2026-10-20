@@ -23,6 +23,10 @@ BATCH_FIELDS = {
     "remove_relation": {"target", "relationTargetId", "relationType"},
     "set_gear": {"target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds"},
     "create_controller": {"name", "pages"}, "set_controller_page": {"controllerName", "pageId", "pageName", "pageIndex"},
+    "set_component_instance_controller": {"target", "controllerName", "pageId", "pageName", "pageIndex"},
+    "set_component_instance_property": {"target", "childPath", "propertyId", "value"},
+    "upsert_component_property": {"childPath", "propertyId", "label"}, "remove_component_property": {"childPath", "propertyId"},
+    "set_controller_properties": {"controllerName", "settings"},
     "remove_object": {"target"},
 }
 

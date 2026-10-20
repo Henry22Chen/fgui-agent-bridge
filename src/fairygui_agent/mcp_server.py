@@ -600,6 +600,56 @@ def fgui_set_controller_page(controller_name: str, page_id: str | None = None, p
 
 
 @mcp.tool()
+def fgui_get_component_instance(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取当前文档直属组件实例的控制器、页面、导出信息及文本/图标属性的覆盖值和实际值；不修改源组件。"""
+    return _editing_call("get_component_instance", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_component_instance_controller(controller_name: str, page_id: str | None = None, page_name: str | None = None,
+                                          page_index: int | None = None, object_id: str | None = None, object_path: str | None = None,
+                                          object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置单个直属组件实例已导出的控制器覆盖页；页面定位三选一。保存父文档，不改源组件及其他实例。"""
+    return _editing_call("set_component_instance_controller", object_id, object_path, object_name, controllerName=controller_name,
+                         **_controller_page_target(page_id, page_name, page_index), save=save)
+
+
+@mcp.tool()
+def fgui_set_component_instance_property(child_path: str, property_id: Literal[0, 1], value: str, object_id: str | None = None,
+                                        object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置实例已暴露的文本(0)/图标(1)覆盖值；child_path 是实例内部点分路径。value 为字符串（含空串），不支持 null 清除。"""
+    return _editing_call("set_component_instance_property", object_id, object_path, object_name, childPath=child_path,
+                         propertyId=property_id, value=value, save=save)
+
+
+@mcp.tool()
+def fgui_get_component_properties() -> dict[str, Any]:
+    """读取当前根组件的文本/图标自定义属性定义；控制器导出信息通过 get_controllers 读取。"""
+    return _client.call("get_component_properties")
+
+
+@mcp.tool()
+def fgui_upsert_component_property(child_path: str, property_id: Literal[0, 1], label: str | None = None, save: bool = False) -> dict[str, Any]:
+    """在当前根组件创建/修改自定义属性映射，支持内部点分路径；0=文本，1=图标。省略 label 保留备注，空串清空；不修改默认文本/图标。"""
+    params: dict[str, Any] = {"childPath": child_path, "propertyId": property_id, "save": save}
+    if label is not None:
+        params["label"] = label
+    return _client.call("upsert_component_property", params)
+
+
+@mcp.tool()
+def fgui_remove_component_property(child_path: str, property_id: Literal[0, 1], save: bool = False) -> dict[str, Any]:
+    """移除当前根组件的指定属性映射，保留内部元件和默认值；缺失为无变化。不清理其他文档实例已有覆盖。"""
+    return _client.call("remove_component_property", {"childPath": child_path, "propertyId": property_id, "save": save})
+
+
+@mcp.tool()
+def fgui_set_controller_properties(controller_name: str, settings: dict[str, Any], save: bool = False) -> dict[str, Any]:
+    """设置当前根控制器的 exported（导出为组件属性）和 alias（备注名）；保留页面、选中页和联动。默认不保存，无完整 Agent undo。"""
+    return _client.call("set_controller_properties", {"controllerName": controller_name, "settings": settings, "save": save})
+
+
+@mcp.tool()
 def fgui_get_loader3d(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, include_asset_info: bool = True) -> dict[str, Any]:
     """读取 Loader3D 和包内 Spine 动画/皮肤；加载失败明确返回列表不可用。"""
     return _client.call("get_loader3d", {"target": _target(object_id, object_path, object_name), "includeAssetInfo": include_asset_info}, timeout=12)

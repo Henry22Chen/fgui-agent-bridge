@@ -1,0 +1,153 @@
+{
+  "version": "0.11.0",
+  "protocolVersion": "2.0",
+  "toolCount": 87,
+  "automatedTests": 86,
+  "newHostCases": 13,
+  "live": {
+    "evidence": "live-windows-editor-mcp",
+    "cases": [
+      {
+        "name": "0.11.0 handshake and 87 tools",
+        "passed": true
+      },
+      {
+        "name": "existing explicit test Editor online",
+        "passed": true
+      },
+      {
+        "name": "read exported/private controls and inherited values",
+        "passed": true
+      },
+      {
+        "name": "native controller override and effective selection agree",
+        "passed": true
+      },
+      {
+        "name": "text/icon/deep/empty override values are effective",
+        "passed": true
+      },
+      {
+        "name": "shared component file and sibling remain unchanged",
+        "passed": true
+      },
+      {
+        "name": "reject without mutation: fgui_set_component_instance_controller:{'object_id': 'child1', 'controller_name': 'Private', 'page_index': 1}",
+        "passed": true
+      },
+      {
+        "name": "reject without mutation: fgui_set_component_instance_controller:{'object_id': 'child1', 'controller_name': 'State', 'page_id': 'missing'}",
+        "passed": true
+      },
+      {
+        "name": "reject without mutation: fgui_set_component_instance_property:{'object_id': 'child1', 'child_path': 'missing', 'property_id': 0, 'value': 'x'}",
+        "passed": true
+      },
+      {
+        "name": "reject without mutation: fgui_set_component_instance_property:{'object_id': 'child1', 'child_path': 'label', 'property_id': 0, 'value': None}",
+        "passed": true
+      },
+      {
+        "name": "reject without mutation: fgui_get_component_instance:{'object_id': 'label1'}",
+        "passed": true
+      },
+      {
+        "name": "reject without mutation: fgui_upsert_component_property:{'child_path': 'caption', 'property_id': 1}",
+        "passed": true
+      },
+      {
+        "name": "reject without mutation: fgui_set_controller_properties:{'controller_name': 'RootState', 'settings': {'homePage': '1'}}",
+        "passed": true
+      },
+      {
+        "name": "omitted definition label is a no-op",
+        "passed": true
+      },
+      {
+        "name": "definition removal does not delete target",
+        "passed": true
+      },
+      {
+        "name": "all five new writers participate in one saved batch with native ID ref",
+        "passed": true
+      },
+      {
+        "name": "batch controller export and alias readable",
+        "passed": true
+      },
+      {
+        "name": "partial batch reports actual changed prefix without save",
+        "passed": true
+      },
+      {
+        "name": "native parent XML contains override and exposed definition",
+        "passed": true
+      },
+      {
+        "name": "all instance edits still leave shared source file untouched",
+        "passed": true
+      },
+      {
+        "name": "nested definition native XML survives remove/readd",
+        "passed": true
+      },
+      {
+        "name": "disable export retains existing controller pages",
+        "passed": true
+      },
+      {
+        "name": "enable export survives native root serialization",
+        "passed": true
+      }
+    ],
+    "readOnly": false,
+    "serverVersion": "0.11.0",
+    "toolCount": 87,
+    "passed": true
+  },
+  "reopen": {
+    "evidence": "live-windows-editor-mcp",
+    "cases": [
+      {
+        "name": "0.11.0 handshake and 87 tools",
+        "passed": true
+      },
+      {
+        "name": "existing explicit test Editor online",
+        "passed": true
+      },
+      {
+        "name": "reopen controller override persists",
+        "passed": true
+      },
+      {
+        "name": "reopen text/icon/deep/empty overrides persist",
+        "passed": true
+      },
+      {
+        "name": "reopen sibling still inherits original values",
+        "passed": true
+      },
+      {
+        "name": "reopen batch alias target persists",
+        "passed": true
+      },
+      {
+        "name": "reopen controller export and alias persist",
+        "passed": true
+      },
+      {
+        "name": "reopen definition label persists",
+        "passed": true
+      },
+      {
+        "name": "reopen read-only document remains clean",
+        "passed": true
+      }
+    ],
+    "readOnly": true,
+    "serverVersion": "0.11.0",
+    "toolCount": 87,
+    "passed": true
+  }
+}

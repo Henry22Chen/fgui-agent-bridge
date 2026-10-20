@@ -1,15 +1,15 @@
 # Agent Bridge 当前能力参考
 
-> 这是独立 `fgui-agent-bridge` 仓库在 2026-10-13 的能力快照。功能变动时必须同步本文件，并以源码实际签名为最终依据。
+> 这是独立 `fgui-agent-bridge` 仓库在 2026-10-20 的能力快照。功能变动时必须同步本文件，并以源码实际签名为最终依据。
 
 ## 版本与通道
 
-- Bridge 版本：`0.10.0`
+- Bridge 版本：`0.11.0`
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：80；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
+- MCP 工具数：87；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -58,6 +58,12 @@
 | `fgui_get_controllers` / `fgui_create_controller` | 无 / `name`, `page_names?`, `save=false` | 读取根控制器/页面/当前页；创建空或有初始页面的控制器 |
 | `fgui_add_controller_page` / `fgui_rename_controller_page` | `controller_name`, `name`, `save=false`；重命名另需页面定位 | 末尾追加或保留 ID 改名 |
 | `fgui_set_controller_page` | `controller_name`, `page_id/page_name/page_index` 三选一, `save=false` | 原生切页，应用 Gear/联动，不修改 homePage |
+| `fgui_get_component_instance` | object_id/object_path/object_name 三选一 | 读取直属实例的控制器、exported/alias、覆盖页和自定义属性覆盖/实际值 |
+| `fgui_set_component_instance_controller` | target、controller_name、page_id/page_name/page_index 三选一、save=false | 为已导出的控制器设置实例覆盖，只保存父文档 |
+| `fgui_set_component_instance_property` | target、child_path、property_id=0/1、value（字符串）、save=false | 已暴露文本/图标的实例覆盖；内部点分路径；空串可用，null 拒绝 |
+| `fgui_get_component_properties` | 无 | 当前根组件的文本/图标属性定义 |
+| `fgui_upsert_component_property` / `fgui_remove_component_property` | child_path、property_id=0/1、save=false；upsert 另传 label? | 创建/修改/删除定义映射；省略 label 保留，空串清空；不删除内部元件 |
+| `fgui_set_controller_properties` | controller_name、settings={exported?,alias?}、save=false | 当前根控制器导出为组件属性及备注，保留页面与联动 |
 | `fgui_get_gears` / `fgui_set_gear` | 对象定位；修改 `gear_type`, `controller_name`, `default_value?`, `page_values?`, `visible_page_ids?`, `save=false` | 读取/完整替换一个 Gear；其余 Gear 及缓动等附加配置保留 |
 | `fgui_get_controller_actions` / `fgui_upsert_controller_action` / `fgui_remove_controller_action` | `controller_name`；upsert 另传 `action`, `action_index?`, `save=false`；remove 必传索引 | 读取联动及可用目标页面；省略索引追加，指定索引替换或删除单条 |
 | `fgui_list_transitions` / `fgui_get_transition` | 无 / `name` | 读取当前组件的 Transition |
@@ -78,6 +84,7 @@
 - **文本与几何**：文本支持 font/fontSize/color、align/vAlign/autoSize、lineGap/letterSpacing、text、bold/italic/underline/strike、stroke/strokeColor/strokeSize、shadow/shadowColor/shadowX/shadowY、ubbEnabled/varsEnabled/singleLine、outlineSoftness/underlaySoftness/faceDilate，效果以宿主和字体实际支持为准。描边/阴影参数需启用对应效果。批量坐标/尺寸与文本样式按固定顺序写入，拒绝与自动尺寸或 useSourceSize 冲突；不自动关闭调用方未指定的约束。验证支持描边、阴影、UBB 默认省略和组件引用默认尺寸，保留 `externalReload=false` 的接口语义。
 
 - **页面与作用域**：Controller/Action 属于当前文档根组件，Gear 属于直属子对象；联动可引用当前/直属子组件控制器，不改子组件资源。页面定位三选一，优先稳定 ID；名称不允许空白、逗号或控制字符，同一控制器中新页面名称不能重复。创建有页面的控制器或向空控制器追加首页时自动选中第一页。切页不修改 homePage，重开可能按首页规则重选。
+- **实例与定义**：`get_controllers` 额外返回 exported/alias。实例值用 `get_component_instance` 及两个实例 setter；组件定义用三个 component_property 工具，控制器导出用 set_controller_properties。只暴露原生文本/图标，拒绝无效/重复路径；不等于 `customData`。详见[组件属性说明](component-properties.md)。
 - **Gear 配置**：display 用 `visible_page_ids`，空数组是全页可见；其余类型必须传 `default_value` 和 `page_values=[{"pageId":"0","value":...}]`，未列页使用默认值。text 为不含竖线的字符串；icon 为图片 ui:// 或空串；xy 为整数 `{x,y}`；size 为非负整数 `{width,height,scaleX?,scaleY?}`（缩放默认 1）；color 为 `{color:"#RRGGBB",strokeColor?:"#RRGGBB"}`（描边默认黑）。数值绝对值不超过 1000000。set 是完整替换而非单页补丁；读取中的未序列化默认值为 null，其它 Gear 返回 XML。
 - **Action 配置**：`type` 为 change_page/play_transition；公共 `fromPageIds`、`toPageIds` 都使用源控制器页面 ID，省略/空数组匹配任意页，两组条件同时满足才执行。change_page 使用 `objectId`（空串/省略为当前组件）、`controllerName`、`targetPageId`；play_transition 使用 `transitionName`、`repeat`（默认 1，正整数或 -1 循环）、`delay`（默认 0，0..86400 秒）、`stopOnExit`（默认 false）。引用必须存在，按引用图拒绝自引用/循环。索引从 0 开始，增删后重读；更新完整替换单条，不传读取元数据 index/xml。未知类型可读取、保留、删除，不能 upsert。
 - **预览与外观**：编辑 Action 不触发执行；普通编辑模式切页可应用控制器/Gear，但 Editor 6.1.4 只在原生运行预览中播放联动 Transition。单独 `fgui_preview_animation` 不等于验证联动触发。Gear 最终外观还受布局、autoSize、基础 visible、显示锁等影响，不能只看对象树 visible 判断显隐。

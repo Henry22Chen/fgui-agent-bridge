@@ -2,11 +2,11 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.10.0`
+- **版本**：`0.11.0`
 - **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
-- **MCP 工具数**：80；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
+- **MCP 工具数**：87；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
 
 > **说明**：Bridge 仓库与业务 FairyGUI 工程分开存放。FairyGUI 工程只需安装轻量插件；在宿主 IDE 中可按需安装 Skill 提高 AI 操作准确率。
 
@@ -59,7 +59,9 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 
 安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
-当前发布版本为 `0.10.0`，对应 Git 标签 `v0.10.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+当前发布版本为 `0.11.0`，对应 Git 标签 `v0.11.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+
+组件实例属性能力需要 Bridge 和插件 `0.11.0`，新增接口见[组件属性说明](.agents/skills/fgui-agent-bridge/references/component-properties.md)。升级后重新加载插件及 MCP 会话，并分别核对两端达到项目指定版本。
 
 ### 方式一：AI 智能安装（推荐）
 
@@ -69,7 +71,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
 源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
-安装版本：0.10.0，Git 标签 v0.10.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
+安装版本：0.11.0，Git 标签 v0.11.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
@@ -86,7 +88,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
-git clone --branch v0.10.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.11.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
@@ -94,8 +96,8 @@ uv sync --frozen
 检出标签后处于 detached HEAD 是固定版本安装的正常状态。已有 Bridge 安装先运行 `git status --short` 核对并保留未提交改动，再切换到项目指定的标签：
 
 ```bash
-git fetch origin tag v0.10.0
-git switch --detach v0.10.0
+git fetch origin tag v0.11.0
+git switch --detach v0.11.0
 uv sync --frozen
 ```
 
@@ -328,8 +330,11 @@ uv run fgui-agent preview-transition play fadeIn
 | **列表与滚动** | `fgui_get_list_settings`、`fgui_set_list_settings`、`fgui_get_scroll_settings`、`fgui_set_scroll_settings` | 布局、行列数、间距、滚动方向、分页及分页控制器 |
 | **分组与关系** | `fgui_get_group`、`fgui_set_group`、`fgui_get_relations`、`fgui_add_relation`、`fgui_remove_relation` | 分组成员和原生布局 Relations |
 | **二维 Loader** | `fgui_get_loader`、`fgui_set_loader` | 等比适配、对齐与自动尺寸 |
+| **组件实例与属性定义** | `fgui_get_component_instance`、`fgui_set_component_instance_controller`、`fgui_set_component_instance_property`、`fgui_get_component_properties`、`fgui_upsert_component_property`、`fgui_remove_component_property`、`fgui_set_controller_properties` | 设置单实例的控制器/文本/图标覆盖，维护根组件属性映射及控制器导出、备注 |
 
 这些编辑接口只作用于当前文档直属对象；ScrollPane 支持根组件或原生 List。`save=true` 保存整个组件并回读原生 XML；九宫格属于图片资源元数据，会保存整个所属包并影响所有引用。Editor 不保存空分组，创建并保存分组时必须指定 `group_member_ids`。没有完整 Agent 撤销，失败不会自动回滚。
+
+组件实例覆盖通过原生 `ComProperty` 持久化，只保存父文档；打开共享组件文档修改定义是不同操作。自定义属性映射支持文本/图标和点分内部路径；控制器实例设置要求源组件先导出。五个新增写操作均支持批量和 ref，详情见[组件属性说明](.agents/skills/fgui-agent-bridge/references/component-properties.md)。
 
 整页布局优先使用 `fgui_get_objects → fgui_apply_batch → fgui_capture_states`：批量绑定目标文档/revision，Editor 分配新控件 ID，按操作键查询回执以避免超时重复创建。默认摘要返回、不保存；失败停止但不是原子回滚。多状态返回一张编号联系图，完整标签和原图路径在 metadata 中。详见[批量计划示例](.agents/skills/fgui-agent-bridge/references/editing-plans.md)和[方案/验收](docs/performance-plan.md)。
 
