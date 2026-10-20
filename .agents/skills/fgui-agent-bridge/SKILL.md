@@ -120,15 +120,15 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 脚本会先校验所选目录，再写入目标工程的 `plugins/agent-bridge/`；无效目录或取消选择时不得写入。自动化环境可改用 `--project PATH --apply`。
 
-首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.10.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
+首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.11.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
 
 ```bash
-git clone --branch v0.10.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.11.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
 
-已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.10.0`、`git switch --detach v0.10.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
+已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.11.0`、`git switch --detach v0.11.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
 
 Codex 安装采用两层配置，完整示例见源仓库 README 的安装指南：
 
