@@ -351,6 +351,30 @@ def build_parser() -> argparse.ArgumentParser:
             if command == "add-relation": p.add_argument("--use-percent", action="store_true")
         if not command.startswith("get-"): p.add_argument("--save", action="store_true")
 
+    for command in ("get-component-instance", "set-component-instance-controller", "set-component-instance-property",
+                    "get-component-properties", "upsert-component-property", "remove-component-property", "set-controller-properties"):
+        p = subparsers.add_parser(command, help="组件实例覆盖值或当前根组件属性定义，默认不保存")
+        if "instance" in command:
+            _add_target_arguments(p)
+        if command in ("set-component-instance-controller", "set-controller-properties"):
+            p.add_argument("controller_name")
+        if command == "set-component-instance-controller":
+            selector = p.add_mutually_exclusive_group(required=True)
+            selector.add_argument("--page-id")
+            selector.add_argument("--page-name")
+            selector.add_argument("--page-index", type=int)
+        if command in ("set-component-instance-property", "upsert-component-property", "remove-component-property"):
+            p.add_argument("child_path", help="实例内部/组件定义中的点分元件路径")
+            p.add_argument("property_id", type=int, choices=(0, 1), help="0=文本，1=图标")
+        if command == "set-component-instance-property":
+            p.add_argument("value", help="原始字符串；允许空串，不作为 JSON 解析")
+        if command == "upsert-component-property":
+            p.add_argument("--label")
+        if command == "set-controller-properties":
+            p.add_argument("settings", help='JSON 对象，例如 {"exported":true,"alias":"状态"}')
+        if not command.startswith("get-"):
+            p.add_argument("--save", action="store_true")
+
     call_parser = subparsers.add_parser("call", help="调试用：调用原始 action")
     call_parser.add_argument("action")
     call_parser.add_argument("--params", default="{}", help="JSON 对象")
@@ -623,6 +647,27 @@ def main() -> int:
                 params["frame"] = args.frame
         elif args.command == "active":
             action = "get_active_document"
+        elif args.command in ("get-component-instance", "set-component-instance-controller", "set-component-instance-property",
+                              "get-component-properties", "upsert-component-property", "remove-component-property", "set-controller-properties"):
+            action = args.command.replace("-", "_")
+            if "instance" in args.command:
+                params["target"] = target_from_args(args)
+            if not args.command.startswith("get-"):
+                params["save"] = args.save
+            if args.command in ("set-component-instance-controller", "set-controller-properties"):
+                params["controllerName"] = args.controller_name
+            if args.command == "set-component-instance-controller":
+                for key, value in (("pageId", args.page_id), ("pageName", args.page_name), ("pageIndex", args.page_index)):
+                    if value is not None:
+                        params[key] = value
+            if args.command in ("set-component-instance-property", "upsert-component-property", "remove-component-property"):
+                params.update(childPath=args.child_path, propertyId=args.property_id)
+            if args.command == "set-component-instance-property":
+                params["value"] = args.value
+            if args.command == "upsert-component-property" and args.label is not None:
+                params["label"] = args.label
+            if args.command == "set-controller-properties":
+                params["settings"] = load_json_value(args.settings)
         elif args.command == "controllers":
             action = "get_controllers"
         elif args.command in ("get-controller-actions", "upsert-controller-action", "remove-controller-action"):

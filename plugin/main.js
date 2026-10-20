@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.10.0";
+const BRIDGE_VERSION = "0.11.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -646,7 +646,7 @@ function controllerSnapshot(c) {
     const index = c.selectedIndex;
     return { name: String(c.name), pages, selectedIndex: index,
         selectedPageId: pages[index] ? pages[index].id : null, selectedPage: pages[index] ? pages[index].name : null,
-        homePageType: c.homePageType || "", homePage: c.homePage || "" };
+        homePageType: c.homePageType || "", homePage: c.homePage || "", exported: Boolean(c.exported), alias: String(c.alias || "") };
 }
 function requireControllerName(value) {
     // 页面列表以逗号分隔保存；拒绝无法无损往返的名称，不替用户裁剪或改名。
@@ -698,7 +698,7 @@ function finishControllerWrite(doc, c, before, params, changed) {
             }
             if (matches.length !== 1)
                 throw new Error("组件 XML 控制器不存在或不唯一");
-            for (const key of ["name", "pages", "selected", "homePage", "homePageType"]) {
+            for (const key of ["name", "pages", "selected", "homePage", "homePageType", "exported", "alias"]) {
                 if (String(matches[0].GetAttribute(key) || "") !== String(expected.GetAttribute(key) || ""))
                     throw new Error(`组件 XML 的 ${key} 与 Editor 不一致`);
             }
@@ -806,6 +806,185 @@ function editController(action, params) {
         }
     }
     return finishControllerWrite(doc, c, before, params, changed);
+}
+/** 组件属性的原生定位使用点分名称路径；逐层检查重名，避免修改到同名元件。 */
+function componentPropertyObject(component, path, propertyId) {
+    if (typeof path !== "string" || !path || path.split(".").some(p => !p))
+        verificationError("invalid_argument", "childPath 必须为非空点分元件路径", {});
+    if (propertyId !== 0 && propertyId !== 1)
+        verificationError("unsupported_property", "组件自定义属性只支持 propertyId=0（文本）或 1（图标）", {});
+    let current = component;
+    for (const name of path.split(".")) {
+        const matches = [];
+        for (let i = 0; i < Number(current.numChildren || 0); i++)
+            if (current.GetChildAt(i).name === name)
+                matches.push(current.GetChildAt(i));
+        if (matches.length !== 1)
+            verificationError(matches.length ? "ambiguous_target" : "target_not_found", "自定义属性目标不存在或不唯一", { childPath: path, name });
+        current = matches[0];
+    }
+    if (typeof current.GetProp(propertyId) !== "string")
+        verificationError("unsupported_property", "目标元件不支持指定文本/图标属性", { childPath: path, propertyId });
+    return current;
+}
+function componentPropertyList(component) {
+    const result = [], list = component.customProperties;
+    if (list)
+        for (let i = 0; i < list.Count; i++)
+            result.push(list.get_Item(i));
+    return result;
+}
+function componentPropertyDescription(component, p) {
+    const result = { target: String(p.target), propertyId: Number(p.propertyId), label: String(p.label || ""), value: safeValue(p.value), overridden: p.value !== null && p.value !== undefined };
+    try {
+        result.effectiveValue = safeValue(componentPropertyObject(component, p.target, p.propertyId).GetProp(p.propertyId));
+    }
+    catch (error) {
+        result.resolutionError = { code: error.code, message: String(error) };
+    }
+    return result;
+}
+function componentInstanceTarget(params) {
+    const obj = editingTarget(params);
+    if (!obj.controllers || !obj.customProperties || !obj.resourceURL)
+        verificationError("wrong_object_type", "目标必须为当前文档直属的组件资源实例", {});
+    return obj;
+}
+function componentInstanceSnapshot(obj) {
+    const properties = componentPropertyList(obj);
+    return { resourceURL: String(obj.resourceURL), controllers: controllerList({ content: obj }).map(c => {
+            const p = properties.filter(p => p.propertyId === -1 && p.target === c.name);
+            return { ...controllerSnapshot(c), overridden: p.length === 1 && p[0].value !== null && p[0].value !== undefined,
+                overridePageId: p.length === 1 ? safeValue(p[0].value) : null };
+        }), properties: properties.filter(p => p.propertyId >= 0).map(p => componentPropertyDescription(obj, p)) };
+}
+/** 定义使用根组件 Write_editMode；实例 Write 只包含实例配置，不能验证组件定义。 */
+function editComponentMetadata(doc, obj, params, read, changed, apply) {
+    if (params.save !== undefined && typeof params.save !== "boolean")
+        throw new Error("save 必须是布尔值");
+    const before = read();
+    if (changed) {
+        invalidateUntrackedHistory(doc);
+        try {
+            apply();
+            doc.SetModified(true);
+            doc.RefreshInspectors();
+        }
+        catch (error) {
+            doc.SetModified(true);
+            verificationError("editor_rejected", String(error), { before, after: read(), mutationMayHaveOccurred: true, rollbackAttempted: false });
+        }
+    }
+    let saved = false, persisted = false;
+    if (params.save === true) {
+        try {
+            const Xml = CS.FairyGUI.Utils.XML, expected = gearXmlData(new Xml(editorDocumentSnapshot(doc)));
+            doc.Save();
+            if (doc.isModified)
+                throw new Error("保存后组件仍有未保存修改");
+            saved = true;
+            if (!valuesEqual(expected, gearXmlData(componentXmlNode(doc, doc.content))))
+                throw new Error("磁盘 XML 与组件完整原生快照不一致");
+            persisted = true;
+            clearAgentHistory();
+            untrackedDocumentVersions.delete(doc);
+        }
+        catch (error) {
+            verificationError("persistence_failed", String(error), { before, after: read(), saved, persisted: false, mutationMayHaveOccurred: changed, rollbackAttempted: false });
+        }
+    }
+    return { target: targetSummary(obj, params.target), before, after: read(), changed, saved, persisted,
+        documentModified: Boolean(doc.isModified), agentUndoSupported: false,
+        note: "实例只写父文档覆盖值；定义只写当前根组件。save=true 保存整个当前组件，失败不自动回滚。" };
+}
+function getComponentInstance(params) {
+    const obj = componentInstanceTarget(params);
+    return { target: targetSummary(obj, params.target), ...componentInstanceSnapshot(obj) };
+}
+function instanceProperty(obj, path, propertyId) {
+    const matches = componentPropertyList(obj).filter(p => p.target === path && p.propertyId === propertyId);
+    if (matches.length !== 1)
+        verificationError(matches.length ? "ambiguous_property" : "property_not_exposed", "实例属性不存在、不唯一或未在源组件中导出", { childPath: path, propertyId });
+    return matches[0];
+}
+function setComponentInstanceController(params) {
+    const doc = getActiveDocument(), obj = componentInstanceTarget(params), c = resolveController({ content: obj }, params.controllerName);
+    if (!c.exported)
+        verificationError("controller_not_exposed", "请先在源组件中将控制器导出为组件属性", { controllerName: c.name });
+    const page = resolveControllerPage(c, params), p = instanceProperty(obj, String(c.name), -1);
+    const changed = p.value !== page.id || String(c.selectedPageId) !== page.id;
+    return editComponentMetadata(doc, obj, params, () => componentInstanceSnapshot(obj), changed, () => {
+        // 只切 selectedIndex 不会写入实例 controller 属性；必须同时更新原生 ComProperty。
+        p.value = page.id;
+        obj.ApplyCustomProperty(p);
+        if (String(c.selectedPageId) !== page.id || p.value !== page.id)
+            throw new Error("实例控制器被 Gear/联动重定向，未停留在目标页");
+    });
+}
+function setComponentInstanceProperty(params) {
+    const doc = getActiveDocument(), obj = componentInstanceTarget(params), field = componentPropertyObject(obj, params.childPath, params.propertyId);
+    const p = instanceProperty(obj, params.childPath, params.propertyId);
+    // Native ApplyCustomProperty(null) removes XML override but does not restore the visible value; reject it rather than claim reset.
+    if (typeof params.value !== "string")
+        verificationError("invalid_argument", "value 必须为字符串（允许空串）；本接口不以 null 清除覆盖", {});
+    const changed = p.value !== params.value || field.GetProp(params.propertyId) !== params.value;
+    return editComponentMetadata(doc, obj, params, () => componentInstanceSnapshot(obj), changed, () => {
+        p.value = params.value;
+        obj.ApplyCustomProperty(p);
+        if (field.GetProp(params.propertyId) !== params.value || p.value !== params.value)
+            throw new Error("Editor 未接受实例属性值");
+    });
+}
+function componentPropertyDefinitions(component) {
+    return componentPropertyList(component).filter(p => p.propertyId >= 0).map(p => ({ target: String(p.target), propertyId: Number(p.propertyId), label: String(p.label || "") }));
+}
+function getComponentProperties() {
+    const doc = getActiveDocument();
+    return { documentUrl: doc.content.resourceURL, properties: componentPropertyDefinitions(doc.content) };
+}
+function editComponentProperty(params, remove) {
+    const doc = getActiveDocument(), root = doc.content;
+    if (params.propertyId !== 0 && params.propertyId !== 1)
+        verificationError("unsupported_property", "propertyId 只支持文本 0 / 图标 1", {});
+    if (typeof params.childPath !== "string" || !params.childPath)
+        throw new Error("childPath 不能为空");
+    if (!remove)
+        componentPropertyObject(root, params.childPath, params.propertyId);
+    if (params.label !== undefined && typeof params.label !== "string")
+        throw new Error("label 必须为字符串");
+    const matches = componentPropertyList(root).filter(p => p.target === params.childPath && p.propertyId === params.propertyId);
+    if (matches.length > 1)
+        verificationError("ambiguous_property", "存在重复的组件自定义属性定义", {});
+    const existing = matches[0], label = params.label === undefined ? String(existing && existing.label || "") : params.label;
+    const changed = remove ? Boolean(existing) : !existing || String(existing.label || "") !== label;
+    return editComponentMetadata(doc, root, params, () => componentPropertyDefinitions(root), changed, () => {
+        if (remove)
+            root.customProperties.Remove(existing);
+        else if (existing)
+            existing.label = label;
+        else {
+            const p = new FairyEditor.ComProperty();
+            p.target = params.childPath;
+            p.propertyId = params.propertyId;
+            p.label = label;
+            root.customProperties.Add(p);
+        }
+        const found = componentPropertyDefinitions(root).filter(p => p.target === params.childPath && p.propertyId === params.propertyId);
+        if (remove ? found.length !== 0 : found.length !== 1 || found[0].label !== label)
+            throw new Error("Editor 未接受组件自定义属性定义");
+    });
+}
+function setControllerProperties(params) {
+    const doc = getActiveDocument(), c = resolveController(doc, params.controllerName);
+    const patch = checkedSettings(params.settings, { exported: "boolean", alias: "string" }), before = controllerSnapshot(c);
+    const changed = Object.keys(patch).some(k => before[k] !== patch[k]);
+    return editComponentMetadata(doc, doc.content, params, () => controllerSnapshot(c), changed, () => {
+        for (const key of Object.keys(patch))
+            c[key] = patch[key];
+        const after = controllerSnapshot(c);
+        if (Object.keys(patch).some(k => after[k] !== patch[k]))
+            throw new Error("Editor 未接受控制器导出设置");
+    });
 }
 /** Action 没有稳定 ID；索引按原生执行顺序返回，增删后应重新读取。 */
 function controllerActionList(c) {
@@ -1231,6 +1410,8 @@ function writeStatus() {
             "get_gears", "set_gear", "get_controller_actions", "upsert_controller_action", "remove_controller_action",
             "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page",
             "apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit",
+            "get_component_instance", "set_component_instance_controller", "set_component_instance_property", "get_component_properties",
+            "upsert_component_property", "remove_component_property", "set_controller_properties",
             "get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
             "get_list_settings", "set_list_settings", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
             "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
@@ -4033,6 +4214,10 @@ const BATCH_FIELDS = {
     add_relation: ["target", "relationTargetId", "relationType", "usePercent"], remove_relation: ["target", "relationTargetId", "relationType"],
     set_gear: ["target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds"],
     create_controller: ["name", "pages"], set_controller_page: ["controllerName", "pageId", "pageName", "pageIndex"],
+    set_component_instance_controller: ["target", "controllerName", "pageId", "pageName", "pageIndex"],
+    set_component_instance_property: ["target", "childPath", "propertyId", "value"],
+    upsert_component_property: ["childPath", "propertyId", "label"], remove_component_property: ["childPath", "propertyId"],
+    set_controller_properties: ["controllerName", "settings"],
     remove_object: ["target"]
 };
 function validateBatchTarget(target) {
@@ -4335,6 +4520,8 @@ function handleCommand(request) {
     const actionsBlockedDuringPublish = {
         apply_batch: true, capture_states: true, begin_external_edit: true, finish_external_edit: true,
         set_image_settings: true, create_object: true, set_properties: true, set_button_binding: true, set_list_settings: true,
+        set_component_instance_controller: true, set_component_instance_property: true, upsert_component_property: true,
+        remove_component_property: true, set_controller_properties: true,
         set_scroll_settings: true, set_group: true, add_relation: true, remove_relation: true, set_loader: true,
         set_text_style: true, replace_object_resource: true,
         set_gear: true,
@@ -4369,6 +4556,13 @@ function handleCommand(request) {
         throw new Error(`FairyGUI 发布进行中，暂不能执行：${action}`);
     switch (action) {
         case "get_objects": return getObjects(params);
+        case "get_component_instance": return getComponentInstance(params);
+        case "set_component_instance_controller": return setComponentInstanceController(params);
+        case "set_component_instance_property": return setComponentInstanceProperty(params);
+        case "get_component_properties": return getComponentProperties();
+        case "upsert_component_property": return editComponentProperty(params, false);
+        case "remove_component_property": return editComponentProperty(params, true);
+        case "set_controller_properties": return setControllerProperties(params);
         case "apply_batch": return applyBatch(params, request);
         case "get_batch_result": return getBatchResult(params);
         case "capture_states": return captureStates(params, request.id || String(Date.now()));

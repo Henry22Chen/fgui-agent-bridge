@@ -32,6 +32,10 @@
 | set_gear | target, gearType, controllerName, defaultValue?, pageValues?, visiblePageIds? |
 | create_controller | name, pages? |
 | set_controller_page | controllerName, pageId/pageName/pageIndex 三选一 |
+| set_controller_properties | controllerName, settings={exported?,alias?} |
+| set_component_instance_controller | target, controllerName, pageId/pageName/pageIndex 三选一；需已导出 |
+| set_component_instance_property | target, childPath, propertyId=0/1, value（字符串） |
+| upsert_component_property / remove_component_property | childPath, propertyId=0/1；upsert 可选 label；作用于当前根定义 |
 | remove_object | target；不能删除根 |
 
 先用 dry_run=true 可以预检查结构、作用域和引用，不产生回执或修改。它不能提前模拟所有原生自动布局/Gear 约束。正式执行失败会停止，已经完成的操作保留且不自动保存，不是原子回滚。

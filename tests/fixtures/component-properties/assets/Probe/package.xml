@@ -1,0 +1,1 @@
+<packageDescription id="proptest"><resources><component id="root" name="Root.xml" path="/" exported="true"/><component id="child" name="Child.xml" path="/" exported="true"/><component id="inner" name="Inner.xml" path="/" exported="true"/><image id="panel" name="Panel.png" path="/" exported="true"/></resources></packageDescription>

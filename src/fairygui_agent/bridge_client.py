@@ -72,6 +72,8 @@ CONTROLLER_ACTION_CAPABILITIES = frozenset({"get_controller_actions", "upsert_co
 EDITING_CAPABILITIES = frozenset({"get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
     "get_list_settings", "set_list_settings", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group", "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"})
 PERFORMANCE_CAPABILITIES = frozenset({"apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit"})
+COMPONENT_PROPERTY_CAPABILITIES = frozenset({"get_component_instance", "set_component_instance_controller", "set_component_instance_property",
+    "get_component_properties", "upsert_component_property", "remove_component_property", "set_controller_properties"})
 
 
 class BridgeError(RuntimeError):
@@ -241,6 +243,12 @@ class BridgeClient:
         context = self.project_context()
         status = self.ensure_ready()
         _timing["readinessMs"] = round((time.perf_counter() - ready_started) * 1000, 3)
+        requested = {action}
+        if action == "apply_batch" and isinstance((params or {}).get("operations"), list):
+            requested.update(op.get("action") for op in params["operations"] if isinstance(op, dict) and isinstance(op.get("action"), str))
+        missing = (requested & COMPONENT_PROPERTY_CAPABILITIES) - set(status.get("capabilities", []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少组件属性能力：{', '.join(sorted(missing))}，请同步并重新加载 0.11.0 或更高版本插件。")
         if action in PERFORMANCE_CAPABILITIES and action not in status.get("capabilities", []):
             raise BridgeError(f"FairyGUI Agent Bridge 缺少能力：{action}，请同步并重新加载 0.10.0 或更高版本插件。")
         if action in EDITING_CAPABILITIES and action not in status.get("capabilities", []):

@@ -64,6 +64,8 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - 图片缩放与九宫格用 `fgui_get_image_settings` / `fgui_set_image_settings`；这是影响所有引用的包级设置，`save=true` 保存整个所属包并回读，不等同于组件保存。
 - 按钮与父控制器的原生绑定用 `fgui_get_button_binding` / `fgui_set_button_binding`；List 布局用 `fgui_get_list_settings` / `fgui_set_list_settings`，ScrollPane 分页和控制器用 `fgui_get_scroll_settings` / `fgui_set_scroll_settings`。二维 Loader 布局用 `fgui_get_loader` / `fgui_set_loader`。
 - 分组成员用 `fgui_get_group` / `fgui_set_group`，空 ID 解除分组；布局关系用 `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation`。只改当前文档直属对象及同层/父级引用，拒绝循环和继承只读关系；默认不保存，`save=true` 保存整个组件并核对原生 XML。
+- 实例配置先 `fgui_get_component_instance`，再用 `fgui_set_component_instance_controller` 或 `fgui_set_component_instance_property` 设置单个直属实例的控制器、文本/图标覆盖值；不为修改一个实例而打开并改写共享组件定义。控制器须已导出，内部属性须已暴露；字符串含空串，不支持 null 清除。
+- 组件定义用 `fgui_get_component_properties` / `fgui_upsert_component_property` / `fgui_remove_component_property` 管理当前根组件的文本(0)/图标(1)映射，内部路径用点号；控制器导出与备注用 `fgui_set_controller_properties(settings={exported,alias})`。实例与定义的五个写操作均可批量，说明见[组件属性](references/component-properties.md)。
 - Spine：先 `fgui_get_loader3d` 再 `fgui_set_loader3d`；仅编辑直属 Loader3D 的已有包内资源。导入后的修复用 `fgui_fix_spine_anchor`；绑定/插入时默认修复，包保存边界见下文。
 - 状态编辑：先读取 `fgui_get_controllers` / `fgui_get_gears` / `fgui_get_controller_actions`，再编辑页面、Gear 或联动。页面优先用稳定 ID；Gear set 完整替换单个 Gear，Action upsert 省略索引为追加、指定索引为完整替换单条，增删后重读索引。作用于当前根控制器或直属对象；联动可引用直属子组件，不写子组件资源。具体格式见能力参考。
 - 属性修改（如 `text`、`icon`、`font` 等白名单属性）进入 Agent 属性事务栈；结构创建、插入和删除没有完整结构快照撤销。
@@ -205,7 +207,7 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
-- `0.10.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
+- `0.11.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。
@@ -215,6 +217,7 @@ git diff --check
 - 新原生节点、批量属性、按钮绑定、List/ScrollPane、二维 Loader、分组与 Relations 不提供完整 Agent 撤销，实际修改清除旧历史并保持 dirty。无变化且不保存时保留历史；拒绝的输入不会作为成功写入。不要将控件配置验证等同于运行预览点击、滚动或业务逻辑联调。
 - `verify_document` 可传入 `target + expected` 执行磁盘 XML 持久化比对，失败响应保留结构化 `error.details`（包含 `stage`、expected、actual、differences）。
 - Loader3D、Controller、Gear 和联动默认不保存，实际修改清空旧 Agent 历史，无完整撤销；`save=true` 保存整个组件并回读 XML，写入失败按实际响应报告，不假装已回滚。Controller 页面/控制器删除仍未开放。
+- 组件实例属性、组件定义映射和控制器导出设置也没有完整 Agent 撤销。定义仅编辑当前根组件；实例仅改父文档覆盖，保存时比对完整原生 XML。移除定义不扫描或清理其他文档已有覆盖；同一实例设置可能受内部 Gear/联动影响，失败保留实际修改。
 - SpineFixer 仅支持已验证的 Spine 4.2 二进制；绑定资源或插入 Spine 默认修复尺寸、锚点和 PMA 并保存所属包，独立于组件 `save=false`，不能由文档 undo/discard 回退。可显式 `fix_spine=false`；查询、截图和仅调整播放属性不修复。
 - 不允许删除根组件；不要把 `discard`、`undo` 和 `save` 混为同一语义。
 - 根组件点击穿透使用可序列化的 `opaque=false`；不要把无法持久化的根 `touchable` 宣称成功。
