@@ -18,6 +18,7 @@ BATCH_FIELDS = {
     "insert_object": {"url", "name", "x", "y", "insertIndex"},
     "set_properties": {"target", "properties"}, "set_text_style": {"target", "style"},
     "set_button_binding": {"target", "settings"}, "set_list_settings": {"target", "settings"},
+    "set_list_item_resources": {"target", "settings"},
     "set_scroll_settings": {"target", "settings"}, "set_loader": {"target", "settings"},
     "set_group": {"target", "groupId"}, "add_relation": {"target", "relationTargetId", "relationType", "usePercent"},
     "remove_relation": {"target", "relationTargetId", "relationType"},

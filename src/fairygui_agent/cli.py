@@ -340,11 +340,12 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--insert-index", type=int)
     native.add_argument("--group-member-ids", help="JSON 对象 ID 数组；保存分组时必填")
     native.add_argument("--save", action="store_true")
-    for command in ("set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
+    for command in ("set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
         p = subparsers.add_parser(command, help="读取/编辑当前文档直属对象，默认不保存")
         _add_target_arguments(p)
         if command.startswith("set-"):
-            p.add_argument("group_id" if command == "set-group" else "settings", help="分组 ID（空串解除）或 JSON 设置")
+            help_text = "JSON：defaultItem、最终有序 items（sourceIndex 保留原项；可改 url/标题/图标/properties）" if command == "set-list-item-resources" else "分组 ID（空串解除）或 JSON 设置"
+            p.add_argument("group_id" if command == "set-group" else "settings", help=help_text)
         if command in ("add-relation", "remove-relation"):
             p.add_argument("relation_type")
             p.add_argument("--relation-target-id", default="parent")
@@ -712,7 +713,7 @@ def main() -> int:
         elif args.command == "get-text-style":
             action = "get_text_style"
             params = {"target": target_from_args(args)}
-        elif args.command in ("get-image-settings", "set-image-settings", "create-object", "set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
+        elif args.command in ("get-image-settings", "set-image-settings", "create-object", "set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
             action = args.command.replace("-", "_")
             if args.command == "create-object":
                 params = {"objectType": args.object_type, "x": args.x, "y": args.y, "width": args.width, "height": args.height, "save": args.save}

@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.11.0`
+- Bridge 版本：`0.12.1`（Git 标签 `v0.12.1`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：87；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
+- MCP 工具数：89；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -46,6 +46,7 @@
 | `fgui_get_image_settings` / `fgui_set_image_settings` | 图片 url 或包/资源定位；修改 `settings`, save=false | 包级缩放/九宫格：`scaleMode=none/9grid/tile`、`scale9Grid={x,y,width,height}`、`gridTile=0..31` |
 | `fgui_get_button_binding` / `fgui_set_button_binding` | target；修改 `settings`, save=false | `controllerName`、`pageId`、`selected`；空控制器名清除绑定 |
 | `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | `layout`、`repeatX/repeatY`、`lineGap/columnGap`、`align/vAlign`、`autoResizeItem`、`selectionMode` |
+| `fgui_get_list_item_resources` / `fgui_set_list_item_resources` | target；修改 `settings={defaultItem?,items?}`, save=false | 默认项资源与预置项增删重排、资源/名称/标题/图标/属性覆盖；`sourceIndex` 保留原项，items 完整替换，详见[列表项编辑](list-items.md) |
 | `fgui_get_scroll_settings` / `fgui_set_scroll_settings` | target；修改 `settings`, save=false | 根组件或原生 List：`overflow`、`scroll`、`scrollBarDisplay`、`scrollBarFlags`、`pageMode`、`pageControllerName` |
 | `fgui_get_group` / `fgui_set_group` | target；修改 `group_id`, save=false | 设置同层分组，空串解除，拒绝循环 |
 | `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation` | target；修改 `relation_type`, `relation_target_id=parent`, `use_percent=false`（add）, save=false | 读取可用类型；增删单条关系并保留同目标其它关系，拒绝循环和继承只读关系 |
@@ -77,7 +78,7 @@
 ## 组件与动画语义
 
 - **计划与性能**：批量只操作一个活动文档，必须匹配 revision；允许操作/原生参数见[计划示例](editing-plans.md)。ref 仅用于创建，引用必须向后使用；Editor 分配 ID。dry_run 只预检结构/作用域/引用，动态原生约束执行时校验。单步保存、导入发布、切换文档、任意脚本均禁止。失败停止、不自动保存/回滚；同操作键同参数只返回回执，不重复创建。回执仅限同 Editor 进程，unknown/running 不代表可安全重试。
-- **外部编辑与预览**：XML 交接令牌绑定原生文档和完整快照，Editor 有新内容时拒绝重载；allow_unchanged_dirty 只能在完整快照一致时显式使用。多状态截图逐状态从原控制器基线开始，finally 恢复并回读完整快照；只适用普通设计编辑态，不承诺恢复运行预览业务副作用。
+- **外部编辑与预览**：已授权界面任务可自主编辑源 XML，无需单独许可。Editor 持有文档时交接干净文档，令牌绑定原生实例和完整快照，有新内容时拒绝重载；allow_unchanged_dirty 只能在完整快照一致时显式使用。确认无人持有或独占隔离工程时可离线编辑并校验，不能把 MCP 离线视为无人持有。因缺少工具接口而改用 XML，最终报告必须列出具体缺口、原因、修改路径/行号与范围、检查及重载结果、未验证事项和补齐建议。多状态截图逐状态从原控制器基线开始，finally 恢复并回读完整快照；只适用普通设计编辑态，不承诺恢复运行预览业务副作用。
 
 - **原生编辑**：只修改当前文档直属对象，嵌套定义先打开所属组件；ScrollPane 仅允许根组件或原生 List。按钮绑定引用父控制器名称和稳定页面 ID，不重写父控制器首页。分组边界由成员决定，空分组不会被 Editor 保存；创建并保存时需传成员。新接口实际修改清除旧 Agent 历史，无完整结构撤销，失败返回可能已发生的修改，不伪称回滚。
 - **布局配置**：List layout 为 `column/row/flow_hz/flow_vt/pagination`，repeatX/Y 为列数/行数（0 自动计算），分页还需配置 ScrollPane。overflow 为 `visible/hidden/scroll`，scroll 为 `horizontal/vertical/both`，scrollBarDisplay 为 `default/visible/auto/hidden`；pageMode 只修改对应位并保留其它 scrollBarFlags。Loader fill 为 `none/scale/scaleMatchHeight/scaleMatchWidth/scaleFree/scaleNoBorder`，`scale` 为等比适配。
@@ -132,6 +133,7 @@
 - 计划与交接：`get-objects`、`apply-batch PLAN.json`、`get-batch-result`、`capture-states`、`begin-external-edit`、`finish-external-edit`、`diagnostics`。批量计划字段使用 Bridge camelCase，全局 --timeout 仍在命令前。
 - 属性与验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`set-properties`、`verify-document`、`capture-document`
 - 原生布局：`create-object`、`get-image-settings/set-image-settings`、`get-button-binding/set-button-binding`、`get-list-settings/set-list-settings`、`get-scroll-settings/set-scroll-settings`、`get-loader/set-loader`、`get-group/set-group`、`get-relations/add-relation/remove-relation`
+- 列表项：`get-list-item-resources`、`set-list-item-resources SETTINGS_JSON`；`--id/--path/--name` 定位直属 List，写入支持 `--save`。
 - 状态编辑：`controllers`、`create-controller`、`add-controller-page`、`rename-controller-page`、`set-controller-page`、`get-gears`、`set-gear`、`get-controller-actions`、`upsert-controller-action`、`remove-controller-action`
 - 预览：`preview-transition`、`preview-movieclip`
 - 保存发布：`save`、`discard`、`save-all`、`history`、`undo`、`redo`、`publish-settings`、`publish`
@@ -145,7 +147,7 @@
 - Loader3D 专用接口支持已有包内 Spine；不包含 DragonBones、SWF、外部 Spine 导入或运行时游戏代码层动画控制。
 - 通用包资源的删除、移动、重命名仍未开放；只提供带 `force` 和引用检查的 MovieClip 删除。
 - 不开放 Controller/页面删除与页面重排、Gear 解绑/删除或百分比 XY/Alpha 等高级编辑、跨多层子组件联动及特殊跟随页面值；文本样式不支持自动 external reload。
-- Windows Editor 6.1.4 已有隔离实测，未覆盖所有对象/业务组合；不等于业务工程发布和 Unity/设备验收。实现细节及历史验证记录见仓库 `tests/reports/`，不作为技能操作步骤。
+- Windows Editor 6.1.4 已有隔离实测，未覆盖所有对象/业务组合；不等于业务工程发布和 Unity/设备验收。实现和自动回归入口见 `plugin/` 与 `tests/`；临时验证报告和截图仅本地保存，不纳入 Git。
 
 ## 文件变动同步矩阵与对照检查
 

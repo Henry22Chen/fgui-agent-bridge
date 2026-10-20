@@ -7,3 +7,6 @@ node_modules/
 main.js.map
 .DS_Store
 sample/
+
+# Local validation reports and screenshots; reusable fixtures belong in tests/fixtures/.
+tests/reports/

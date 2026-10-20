@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.11.0";
+const BRIDGE_VERSION = "0.12.1";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1413,7 +1413,7 @@ function writeStatus() {
             "get_component_instance", "set_component_instance_controller", "set_component_instance_property", "get_component_properties",
             "upsert_component_property", "remove_component_property", "set_controller_properties",
             "get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
-            "get_list_settings", "set_list_settings", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
+            "get_list_settings", "set_list_settings", "get_list_item_resources", "set_list_item_resources", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
             "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
         ]
     };
@@ -4034,6 +4034,108 @@ const LIST_SETTING_SPEC = { layout: ["column", "row", "flow_hz", "flow_vt", "pag
     align: ["left", "center", "right"], vAlign: ["top", "middle", "bottom"], autoResizeItem: "boolean", selectionMode: ["single", "multiple", "multipleSingleClick", "none"] };
 const LOADER_SETTING_SPEC = { fill: ["none", "scale", "scaleMatchHeight", "scaleMatchWidth", "scaleFree", "scaleNoBorder"], align: ["left", "center", "right"],
     vAlign: ["top", "middle", "bottom"], autoSize: "boolean", shrinkOnly: "boolean", useResize: "boolean" };
+const LIST_ITEM_TEXT_FIELDS = ["name", "title", "icon", "selectedTitle", "selectedIcon"];
+/** 保留空 URL 的继承语义；有效资源单独返回，不能把继承展开后写回预置项。 */
+function listItemResources(obj, items = obj.items, defaultItem = obj.defaultItem || "") {
+    const result = [];
+    for (let i = 0; i < items.Count; i++) {
+        const item = items.get_Item(i), properties = [];
+        for (let j = 0; j < item.properties.Count; j++) {
+            const p = item.properties.get_Item(j);
+            properties.push({ target: p.target, propertyId: p.propertyId, value: p.value });
+        }
+        const entry = { index: i, url: item.url || "", effectiveUrl: item.url || defaultItem, level: item.level, properties };
+        LIST_ITEM_TEXT_FIELDS.forEach(key => entry[key] = item[key]);
+        result.push(entry);
+    }
+    return { defaultItem, items: result };
+}
+function listItemResourceUrl(value, label) {
+    if (typeof value !== "string")
+        throw new Error(`${label} 必须是字符串；空字符串表示清除或继承默认项`);
+    if (!value)
+        return "";
+    if (!value.startsWith("ui://"))
+        throw new Error(`${label} 必须是工程内组件的 ui:// URL`);
+    const item = resolveItem({ url: value });
+    if (item.type !== FairyEditor.FPackageItemType.COMPONENT)
+        throw new Error(`${label} 必须引用组件资源`);
+    const url = String(item.GetURL());
+    if (url === String(getActiveDocument().content.resourceURL))
+        throw new Error("列表项不能引用当前组件自身");
+    return url;
+}
+/** items 是最终有序清单，sourceIndex 始终引用本次调用前的项；克隆后再修改，预检失败不会污染原列表。 */
+function setListItemResources(params) {
+    const doc = getActiveDocument(), obj = editingTarget(params, ["list"]), settings = params.settings;
+    if (!settings || typeof settings !== "object" || Array.isArray(settings) || !Object.keys(settings).length)
+        throw new Error("settings 必须是包含 defaultItem 或 items 的对象");
+    assertKnownKeys(settings, ["defaultItem", "items"], "settings");
+    const defaultItem = settings.defaultItem === undefined ? obj.defaultItem || "" : listItemResourceUrl(settings.defaultItem, "defaultItem");
+    const before = listItemResources(obj), oldItems = obj.items;
+    let entries = settings.items;
+    if (entries === undefined)
+        entries = before.items.map(item => ({ sourceIndex: item.index }));
+    if (!Array.isArray(entries) || entries.length > 10000)
+        throw new Error("items 必须是最多 10000 项的最终有序数组；空数组清空预置项");
+    const ItemList = puerts.$generic(CS.System.Collections.Generic.List$1, FairyEditor.ListItemData);
+    const nextItems = new ItemList();
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (!entry || typeof entry !== "object" || Array.isArray(entry))
+            throw new Error(`items[${i}] 必须是对象`);
+        assertKnownKeys(entry, ["sourceIndex", "url", ...LIST_ITEM_TEXT_FIELDS, "properties"], `items[${i}]`);
+        const data = new FairyEditor.ListItemData();
+        if (entry.sourceIndex !== undefined) {
+            if (!Number.isInteger(entry.sourceIndex) || entry.sourceIndex < 0 || entry.sourceIndex >= oldItems.Count)
+                throw new Error(`items[${i}].sourceIndex 超出原列表范围`);
+            data.CopyFrom(oldItems.get_Item(entry.sourceIndex));
+        }
+        if (entry.url !== undefined)
+            data.url = listItemResourceUrl(entry.url, `items[${i}].url`);
+        const effectiveUrl = data.url || defaultItem;
+        if (!effectiveUrl)
+            throw new Error(`items[${i}] 没有资源，请提供 url 或 defaultItem`);
+        listItemResourceUrl(effectiveUrl, `items[${i}] 有效资源`);
+        for (const key of LIST_ITEM_TEXT_FIELDS)
+            if (entry[key] !== undefined) {
+                if (typeof entry[key] !== "string")
+                    throw new Error(`items[${i}].${key} 必须是字符串；空字符串清空`);
+                data[key] = entry[key];
+            }
+        if (entry.properties !== undefined) {
+            if (!Array.isArray(entry.properties))
+                throw new Error(`items[${i}].properties 必须是数组；空数组清除覆盖值`);
+            const seen = new Set();
+            // 明确提供 properties 时替换该项的全部覆盖；未提供则由 CopyFrom 保留，包括控制器覆盖。
+            data.properties.Clear();
+            for (const property of entry.properties) {
+                if (!property || typeof property !== "object" || Array.isArray(property))
+                    throw new Error("property 必须是对象");
+                assertKnownKeys(property, ["target", "propertyId", "value"], "property");
+                if (typeof property.target !== "string" || !property.target || !Number.isInteger(property.propertyId)
+                    || [-1, 0, 1].indexOf(property.propertyId) < 0 || typeof property.value !== "string")
+                    throw new Error("property 需要非空 target、propertyId=-1(控制器)/0(文本)/1(图标) 和字符串 value");
+                const key = JSON.stringify([property.target, property.propertyId]);
+                if (seen.has(key))
+                    throw new Error("同一预置项的 property target/propertyId 不能重复");
+                seen.add(key);
+                const p = new FairyEditor.ComProperty();
+                p.target = property.target;
+                p.propertyId = property.propertyId;
+                p.value = property.value;
+                data.properties.Add(p);
+            }
+        }
+        nextItems.Add(data);
+    }
+    const desired = listItemResources(obj, nextItems, defaultItem);
+    return editObjectSettings(doc, obj, params, () => listItemResources(obj), desired, () => {
+        obj.defaultItem = defaultItem;
+        // FList.items 的原生 setter 重建舞台子项；仅改 ListItemData 字段不会可靠刷新 Editor 视图。
+        obj.items = nextItems;
+    });
+}
 function readSimpleSettings(obj, spec) {
     const out = {};
     for (const k of Object.keys(spec))
@@ -4210,6 +4312,7 @@ const BATCH_FIELDS = {
     insert_object: ["url", "name", "x", "y", "insertIndex"],
     set_properties: ["target", "properties"], set_text_style: ["target", "style"],
     set_button_binding: ["target", "settings"], set_list_settings: ["target", "settings"],
+    set_list_item_resources: ["target", "settings"],
     set_scroll_settings: ["target", "settings"], set_loader: ["target", "settings"], set_group: ["target", "groupId"],
     add_relation: ["target", "relationTargetId", "relationType", "usePercent"], remove_relation: ["target", "relationTargetId", "relationType"],
     set_gear: ["target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds"],
@@ -4519,7 +4622,7 @@ function handleCommand(request) {
         verificationError("document_busy", "Loader3D 加载中，请等待当前请求完成", {});
     const actionsBlockedDuringPublish = {
         apply_batch: true, capture_states: true, begin_external_edit: true, finish_external_edit: true,
-        set_image_settings: true, create_object: true, set_properties: true, set_button_binding: true, set_list_settings: true,
+        set_image_settings: true, create_object: true, set_properties: true, set_button_binding: true, set_list_settings: true, set_list_item_resources: true,
         set_component_instance_controller: true, set_component_instance_property: true, upsert_component_property: true,
         remove_component_property: true, set_controller_properties: true,
         set_scroll_settings: true, set_group: true, add_relation: true, remove_relation: true, set_loader: true,
@@ -4582,6 +4685,11 @@ function handleCommand(request) {
             return { target: targetSummary(obj, params.target), settings: readSimpleSettings(obj, LIST_SETTING_SPEC) };
         }
         case "set_list_settings": return setSimpleSettings(params, "list", LIST_SETTING_SPEC);
+        case "get_list_item_resources": {
+            const obj = editingTarget(params, ["list"]);
+            return { target: targetSummary(obj, params.target), settings: listItemResources(obj) };
+        }
+        case "set_list_item_resources": return setListItemResources(params);
         case "get_scroll_settings": {
             const obj = scrollTarget(params);
             return { target: targetSummary(obj, params.target), settings: scrollSettings(obj) };

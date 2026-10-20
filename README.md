@@ -2,11 +2,11 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.11.0`
+- **版本**：`0.12.1`
 - **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
-- **MCP 工具数**：87；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
+- **MCP 工具数**：89；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
 
 > **说明**：Bridge 仓库与业务 FairyGUI 工程分开存放。FairyGUI 工程只需安装轻量插件；在宿主 IDE 中可按需安装 Skill 提高 AI 操作准确率。
 
@@ -59,7 +59,9 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 
 安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
-当前发布版本为 `0.11.0`，对应 Git 标签 `v0.11.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+当前发布版本为 `0.12.1`，对应 Git 标签 `v0.12.1`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+
+`0.12.1` 将任务范围内的源 XML 编辑、保存/重载授权和最终工具能力缺口报告规则纳入固定标签安装；协议与 89 个工具接口保持兼容。原 `v0.12.0` 标签保留。
 
 组件实例属性能力需要 Bridge 和插件 `0.11.0`，新增接口见[组件属性说明](.agents/skills/fgui-agent-bridge/references/component-properties.md)。升级后重新加载插件及 MCP 会话，并分别核对两端达到项目指定版本。
 
@@ -71,7 +73,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
 源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
-安装版本：0.11.0，Git 标签 v0.11.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
+安装版本：0.12.1，Git 标签 v0.12.1；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
@@ -88,7 +90,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
-git clone --branch v0.11.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.12.1 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
@@ -96,8 +98,8 @@ uv sync --frozen
 检出标签后处于 detached HEAD 是固定版本安装的正常状态。已有 Bridge 安装先运行 `git status --short` 核对并保留未提交改动，再切换到项目指定的标签：
 
 ```bash
-git fetch origin tag v0.11.0
-git switch --detach v0.11.0
+git fetch origin tag v0.12.1
+git switch --detach v0.12.1
 uv sync --frozen
 ```
 
@@ -237,7 +239,7 @@ uv run python scripts/sync_to_project.py \
 
 用户级 MCP 配置、本地项目配置中的 `fgui` 片段、本机绝对路径、密钥、`.venv/` 和运行时 `.agent/` 不提交。项目 `.codex/config.toml` 若完全按本地配置管理，应加入业务仓库的 `.gitignore`；已跟踪该文件的项目按上文保留其他共享设置。
 
-其他开发者拉取后，Codex 在开始 FairyGUI 任务时按入口检查：已有 MCP 则验证当前工程；本机只有 Bridge 则询问是否配置；未找到 Bridge 则询问已有位置或是否安装。仅有项目级路径配置不代表本机已安装 MCP。用户拒绝后，本次任务不再提示，不使用 MCP，也不自动改用 CLI 或直接修改 XML，可提供只读分析与手工操作步骤；用户另行明确授权其他编辑方式时按其要求处理。
+其他开发者拉取后，Codex 按任务所需选择 Editor API、批量接口或源 XML。只读或能用 XML 完成的已授权任务不以 MCP 安装为前置条件；确需 Editor 能力时，再检查现有配置并在缺失时询问安装或配置。仅有项目级路径不代表 MCP 已安装；用户拒绝后本次不再提示或调用 MCP/CLI，仍可在界面任务授权内编辑 XML。修改前须确认没有用户未保存内容或并发写入冲突。
 
 提示由 Agent 在处理 FairyGUI 任务时遵循上述约定发起，Git 拉取本身不会安装 MCP 或弹出提示。其他客户端需在其对应的 Agent 指令入口引用同一规范。
 
@@ -328,6 +330,7 @@ uv run fgui-agent preview-transition play fadeIn
 | **图片九宫格** | `fgui_get_image_settings`、`fgui_set_image_settings` | 读取与修改图片资源缩放、中心矩形和平铺标志 |
 | **按钮绑定** | `fgui_get_button_binding`、`fgui_set_button_binding` | 原生绑定父控制器及页面，设置选中状态 |
 | **列表与滚动** | `fgui_get_list_settings`、`fgui_set_list_settings`、`fgui_get_scroll_settings`、`fgui_set_scroll_settings` | 布局、行列数、间距、滚动方向、分页及分页控制器 |
+| **列表项资源与属性** | `fgui_get_list_item_resources`、`fgui_set_list_item_resources` | 默认项资源、预置项资源替换/新增/删除/重排、名称/标题/图标及内部属性和控制器覆盖 |
 | **分组与关系** | `fgui_get_group`、`fgui_set_group`、`fgui_get_relations`、`fgui_add_relation`、`fgui_remove_relation` | 分组成员和原生布局 Relations |
 | **二维 Loader** | `fgui_get_loader`、`fgui_set_loader` | 等比适配、对齐与自动尺寸 |
 | **组件实例与属性定义** | `fgui_get_component_instance`、`fgui_set_component_instance_controller`、`fgui_set_component_instance_property`、`fgui_get_component_properties`、`fgui_upsert_component_property`、`fgui_remove_component_property`、`fgui_set_controller_properties` | 设置单实例的控制器/文本/图标覆盖，维护根组件属性映射及控制器导出、备注 |
@@ -336,9 +339,11 @@ uv run fgui-agent preview-transition play fadeIn
 
 组件实例覆盖通过原生 `ComProperty` 持久化，只保存父文档；打开共享组件文档修改定义是不同操作。自定义属性映射支持文本/图标和点分内部路径；控制器实例设置要求源组件先导出。五个新增写操作均支持批量和 ref，详情见[组件属性说明](.agents/skills/fgui-agent-bridge/references/component-properties.md)。
 
+列表项编辑需要两端均具备 `0.12.0` 能力。`settings.items` 是最终有序清单，`sourceIndex` 引用调用前的原项并保留未提供的属性；无索引为新增，遗漏为删除，数组顺序决定重排。支持单独设置默认资源、空字符串清除、属性覆盖数组替换和 `apply_batch`；具体格式与保存边界见[列表项编辑说明](.agents/skills/fgui-agent-bridge/references/list-items.md)。升级后需重新打开 FairyGUI 工程并重启 MCP 会话以加载新增工具。
+
 整页布局优先使用 `fgui_get_objects → fgui_apply_batch → fgui_capture_states`：批量绑定目标文档/revision，Editor 分配新控件 ID，按操作键查询回执以避免超时重复创建。默认摘要返回、不保存；失败停止但不是原子回滚。多状态返回一张编号联系图，完整标签和原图路径在 metadata 中。详见[批量计划示例](.agents/skills/fgui-agent-bridge/references/editing-plans.md)和[方案/验收](docs/performance-plan.md)。
 
-已明确授权直接编辑 XML 时，用 `fgui_begin_external_edit` 取得干净文档交接令牌，外部写入后用 `fgui_finish_external_edit` 在完整内存快照未变的条件下重载。不会自动保存、发布或覆盖外部文件。素材规划可用 `uv run python scripts/inspect_design_assets.py PATH` 读取 PNG 可见边界；PSD 结构读取需先 `uv sync --extra design`。
+已授权界面任务可自主选择直接编辑源 XML，无需另行申请许可。Editor 持有目标文档时，用 `fgui_begin_external_edit` 取得干净文档交接令牌，写入后用 `fgui_finish_external_edit` 在完整内存快照未变时重载并回读；确认无人持有或独占隔离工程时，可离线编辑并验证 XML/ID/资源引用及 package.xml。不能仅凭 MCP 离线判断无人持有；不覆盖用户未保存内容或并发变化。任务所需保存和重载在既有授权内执行，发布按用户授权范围处理。因缺少 MCP 工具接口而转用 XML，必须在最终完成报告单列“工具能力缺口”，说明具体缺失接口、替代原因、修改路径/行号及范围、检查和重载结果、未验证事项与补齐建议，并区分连接、版本、参数或接口限制等其他原因。素材规划可用 `uv run python scripts/inspect_design_assets.py PATH` 读取 PNG 可见边界；PSD 结构读取需先 `uv sync --extra design`。
 
 批量几何设置先预检自动尺寸与源尺寸约束，再设置 Pivot/尺寸，最后设置坐标；调用方 JSON 顺序不会改变结果。文本描边/阴影参数需显式启用对应效果。`fgui_list_items` 返回 `{package, items}` 对象；`fgui_verify_document` 支持引用组件省略的默认尺寸和文本效果属性。GearColor 本身已支持描边色，Gear 最终外观仍受自动尺寸、布局和所选控制器页影响。
 
@@ -428,7 +433,7 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 - 获取图片失败返回 `manual_required`、原因和人工检查指引，**必须要求用户自行验证，保留已完成修改，不自动 undo/discard**。结构、持久化与视觉结论分别报告。
 - `spineCaptureSupported` 是已测捕获路径的能力信息（6.1.4 实测），`spinePresentInTree` 仅表示存在资源；`spineCaptured=null` 表示本次图像尚需观察，不能由对象树自动判定成功。
 - CLI 对应 `get-loader3d --id ID`、`set-loader3d --id ID '{"skinName":"default"}' --save`、`capture-document --scale 1`。CLI 返回截图文件元数据，MCP 才返回图像块。
-- 不自动发布 UI 包，不验证 Unity 运行时换装。实机结果和限制见 `tests/reports/spine-visual-validation.md`。
+- 不自动发布 UI 包，不验证 Unity 运行时换装。自动回归入口见 `tests/test_spine_capture.py`；历史人工验证记录仅本地保存。
 
 截图实现先以独立 UpdateContext 更新组件，消除 Editor 外层视口裁剪，再 GetScreenShot；finally 恢复 Stage 渲染并释放返回纹理。该处理已用高于视口的混合组件验证。
 
@@ -443,7 +448,7 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 - Loader3D 实际修改后清空旧 Agent undo/redo；校验失败、无变化操作保留原历史。保存失败仍清空旧历史；完整回退恢复写入前的 dirty 状态。MCP 原生 undo/redo 回退保持未保存 Loader3D 修改标记，保存或放弃后结束该保护。
 - 异步响应在认领请求时固定目标工程目录，成功/失败回调不使用可能已切换的全局目录。
 - PNG 除块 CRC 外，还验证有界 zlib 解压、完整流、精确扫描行长度与滤波器值。支持 Unity 非交错 8-bit 灰度/RGB/灰度 Alpha/RGBA 截图；坏图或其它编码转 `manual_required`，要求用户自行验证，不回滚修改。
-- 验证与文件索引见 `tests/reports/spine-fixer-review-fixes.md`。
+- 自动回归入口见 `tests/test_spine_capture.py` 和 `tests/spine_fix_harness.cjs`。
 
 ## Controller 基础编辑（0.8.6）
 
@@ -461,7 +466,7 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 CLI：`controllers`、`create-controller State --pages Idle Active --save`、`add-controller-page State Disabled`、`rename-controller-page State Enabled --page-id 1`、`set-controller-page State --page-index 1 --save`。全局 `--project` 放在子命令前。没有新增删除命令。
 
-验证结果及文件索引：`tests/reports/controller-basic-editing.md`。
+自动回归入口见 `tests/test_controllers.py`。
 
 ## Gear 编辑（0.8.7）
 
@@ -493,7 +498,7 @@ fgui_set_gear("display", "State", object_name="badge", visible_page_ids=["1"], s
 
 CLI 示例：`set-gear text State '{"defaultValue":"其他","pageValues":[{"pageId":"1","value":"已领取"}]}' --name title --save`。CLI JSON 使用 camelCase；全局 `--project` 放在子命令前。
 
-截图失败仍要求用户人工验证，保留修改。六类 Gear 的实机样本、测试与文件索引见 `tests/reports/gear-editing.md`。
+截图失败仍要求用户人工验证，保留修改。六类 Gear 的自动回归入口见 `tests/test_gears.py`；临时报告和截图仅本地保存。
 
 ## 控制器联动（0.8.8）
 

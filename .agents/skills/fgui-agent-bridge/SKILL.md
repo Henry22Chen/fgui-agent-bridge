@@ -50,7 +50,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 
 - 多对象计划优先 `fgui_apply_batch`，不要在 exec 内循环调用逐属性 MCP。明确 document_url、expected_revision 和 operation_key；默认摘要、不保存，创建 ref 后用 `$ref` 引用 Editor 分配的 ID。先检查 status，失败可部分执行；超时先 `fgui_get_batch_result`，unknown 不代表未执行。格式见[计划示例](references/editing-plans.md)。
 - 按明确状态矩阵用 `fgui_capture_states` 一次截图并恢复指定控制器，联系图编号对应 metadata 标签；集中比较同画布/同状态，不能把生成图当视觉通过。
-- 用户已明确授权 XML 编辑时，先 `fgui_begin_external_edit` 交接干净文档；外部写入后 `fgui_finish_external_edit` 仅在完整内存快照未变时重载。陌生 dirty 修改不得覆盖；不自动保存或发布。调用计时看 `fgui_diagnostics`，它不包含调用端或模型耗时。
+- 已授权的界面任务可自主选择源 XML 编辑，无需另行申请许可；只读分析可直接读取 XML。Editor 持有目标文档时，先 `fgui_begin_external_edit` 交接干净文档，写入后 `fgui_finish_external_edit` 在完整快照未变时重载并回读；确认无人持有或独占隔离工程时可离线编辑并检查 XML/ID/引用。不得仅凭 MCP 离线判断无人持有，不覆盖用户未保存内容或并发变化。完整流程与缺口报告见[编辑计划](references/editing-plans.md)。调用计时看 `fgui_diagnostics`。
 
 - 新建组件使用 `fgui_create_component`，明确包、目录、名称、宽高、导出状态和冲突策略。
 - 原生 Text/RichText/InputText/Loader/List/Group/Graph 使用 `fgui_create_object`，创建到当前文档根下。保存分组必须传 `group_member_ids`，分组边界由成员决定；默认不保存，无完整结构撤销。
@@ -63,6 +63,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - 文本样式：使用 `fgui_get_text_style` / `fgui_set_text_style` 编辑字体、颜色、描边/阴影开关及参数、粗体/斜体/下划线、UBB、文本、对齐、间距和自动尺寸。描边/阴影参数需启用对应效果；显式尺寸与自动尺寸冲突时先拒绝。批量几何属性用 `fgui_set_properties`，先设置 Pivot/尺寸、最后写坐标，避免 JSON 顺序引发位移；暂不支持自动 external reload。
 - 图片缩放与九宫格用 `fgui_get_image_settings` / `fgui_set_image_settings`；这是影响所有引用的包级设置，`save=true` 保存整个所属包并回读，不等同于组件保存。
 - 按钮与父控制器的原生绑定用 `fgui_get_button_binding` / `fgui_set_button_binding`；List 布局用 `fgui_get_list_settings` / `fgui_set_list_settings`，ScrollPane 分页和控制器用 `fgui_get_scroll_settings` / `fgui_set_scroll_settings`。二维 Loader 布局用 `fgui_get_loader` / `fgui_set_loader`。
+- 列表项先 `fgui_get_list_item_resources`，再 `fgui_set_list_item_resources(settings)`；设置默认项资源，或用最终有序 `items` 清单新增、删除、重排、替换预置项资源及编辑名称/标题/图标、内部文本/图标和控制器覆盖。`sourceIndex` 引用调用前的原项，未提供属性保留；无索引为新增、遗漏为删除、`items=[]` 清空。支持批量，默认不保存，需要 `0.12.0` 或更高版本；格式和完整替换边界见[列表项编辑](references/list-items.md)。
 - 分组成员用 `fgui_get_group` / `fgui_set_group`，空 ID 解除分组；布局关系用 `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation`。只改当前文档直属对象及同层/父级引用，拒绝循环和继承只读关系；默认不保存，`save=true` 保存整个组件并核对原生 XML。
 - 实例配置先 `fgui_get_component_instance`，再用 `fgui_set_component_instance_controller` 或 `fgui_set_component_instance_property` 设置单个直属实例的控制器、文本/图标覆盖值；不为修改一个实例而打开并改写共享组件定义。控制器须已导出，内部属性须已暴露；字符串含空串，不支持 null 清除。
 - 组件定义用 `fgui_get_component_properties` / `fgui_upsert_component_property` / `fgui_remove_component_property` 管理当前根组件的文本(0)/图标(1)映射，内部路径用点号；控制器导出与备注用 `fgui_set_controller_properties(settings={exported,alias})`。实例与定义的五个写操作均可批量，说明见[组件属性](references/component-properties.md)。
@@ -70,7 +71,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - 状态编辑：先读取 `fgui_get_controllers` / `fgui_get_gears` / `fgui_get_controller_actions`，再编辑页面、Gear 或联动。页面优先用稳定 ID；Gear set 完整替换单个 Gear，Action upsert 省略索引为追加、指定索引为完整替换单条，增删后重读索引。作用于当前根控制器或直属对象；联动可引用直属子组件，不写子组件资源。具体格式见能力参考。
 - 属性修改（如 `text`、`icon`、`font` 等白名单属性）进入 Agent 属性事务栈；结构创建、插入和删除没有完整结构快照撤销。
 - 文档与持久化验证：使用 `fgui_verify_document` 重新读取活动文档对象树并可传入 `target + expected` 比对组件 XML 磁盘持久化内容；无 `expected` 时仅作为对象树快照；指定 expected 时默认省略整树，需要时传 include_tree=true。
-- 保存使用 `fgui_save_document` 或 `fgui_save_all`；放弃全部未保存修改使用 `fgui_discard_document`。
+- 保存使用 `fgui_save_document` 或 `fgui_save_all`；已授权任务所需保存和重载无需另行确认，但须先确认不会包含用户或来源不明的未保存修改。放弃全部未保存修改使用 `fgui_discard_document`，不得用它丢弃用户内容。
 - 视觉检查用 `fgui_capture_document` 获取图像后实际观察资源、布局、遮挡与可见性，大体正确即可，不要求帧或像素一致。`pending_review` 尚未验收；缺图返回 `manual_required`，要求用户自行验证并保留修改，不因缺图 undo/discard。
 
 ### 3. 发布
@@ -109,7 +110,7 @@ uv run fgui-agent --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT verify-document -
 - FairyGUI Editor 插件安装到每个目标 FairyGUI 工程的 `plugins/agent-bridge/`。
 - MCP/CLI 从本机固定目录中的独立 Bridge 仓库或已安装的 Python 工具环境运行，多个工作副本复用，不放入 FairyGUI 工程。
 - Skill 可选安装到 Codex 操作的目标代码仓库 `.agents/skills/fgui-agent-bridge/`。
-- 团队操作入口由业务根目录 `AGENTS.md` 引用 `FairyGUI-Editor-操作规范.md`，只在 FairyGUI 任务中检查环境；缺少 MCP 时先询问安装或配置，拒绝后不自动调用 MCP/CLI 或直接改 XML。
+- 团队操作入口由业务根目录 `AGENTS.md` 引用 `FairyGUI-Editor-操作规范.md`；只读或能用源 XML 完成的已授权任务不以 MCP 为前置条件。确需 Editor 能力时再询问安装或配置；用户拒绝后不调用 MCP/CLI，仍可按任务授权及文档归属检查编辑 XML。
 - `.agent/` 是目标 FairyGUI 工程生成的运行时队列，不是安装文件，也不纳入 Git。
 
 普通使用者优先通过同步脚本选择 FairyGUI 工程并安装插件：
@@ -120,15 +121,15 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 脚本会先校验所选目录，再写入目标工程的 `plugins/agent-bridge/`；无效目录或取消选择时不得写入。自动化环境可改用 `--project PATH --apply`。
 
-首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.11.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
+首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.12.1` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
 
 ```bash
-git clone --branch v0.11.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.12.1 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
 
-已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.11.0`、`git switch --detach v0.11.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
+已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.12.1`、`git switch --detach v0.12.1` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
 
 Codex 安装采用两层配置，完整示例见源仓库 README 的安装指南：
 
@@ -188,7 +189,7 @@ uv run fgui-agent --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT update --pull --a
 3. 更新 README、当前能力参考和本 Skill。
 4. 核对插件 capability、Action 分发、Python MCP 装饰器、CLI parser 与文档。
 5. 检查同步脚本仍只写入受管理文件，默认保持 dry-run。
-6. 确认没有提交 `.agent/`、`.venv/`、`__pycache__/`、`node_modules/`、`main.js.map` 或个人绝对路径。
+6. 确认没有提交 `.agent/`、`.venv/`、`__pycache__/`、`node_modules/`、`main.js.map`、临时验证报告/截图或个人绝对路径；回归测试和可复用夹具正常入库。
 
 推荐静态检查：
 
@@ -207,7 +208,7 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
-- `0.11.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
+- `0.12.1` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。
@@ -231,3 +232,4 @@ git diff --check
 - 是否保存、发布、放弃或同步，以及作用范围；
 - 执行了哪些静态检查、MCP 握手和编辑器验证；结构、持久化和视觉结论分开报告；
 - 哪些真实平台或环境仍未验证。
+- 因缺少 MCP 工具接口而转用 XML 时，必须在最终完成报告中单列“工具能力缺口”：具体缺失接口/能力、替代原因、修改的相对路径/行号与对象/字段范围、校验结果、Editor 重载情况、未验证事项及接口补齐建议。区分真正缺失接口、旧版本未加载、连接失败、参数错误和现有接口限制，不得仅在过程中提及后省略。
