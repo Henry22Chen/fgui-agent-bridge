@@ -4,7 +4,7 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.12.0`（Git 标签 `v0.12.0`）
+- Bridge 版本：`0.12.1`（Git 标签 `v0.12.1`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
@@ -147,7 +147,7 @@
 - Loader3D 专用接口支持已有包内 Spine；不包含 DragonBones、SWF、外部 Spine 导入或运行时游戏代码层动画控制。
 - 通用包资源的删除、移动、重命名仍未开放；只提供带 `force` 和引用检查的 MovieClip 删除。
 - 不开放 Controller/页面删除与页面重排、Gear 解绑/删除或百分比 XY/Alpha 等高级编辑、跨多层子组件联动及特殊跟随页面值；文本样式不支持自动 external reload。
-- Windows Editor 6.1.4 已有隔离实测，未覆盖所有对象/业务组合；不等于业务工程发布和 Unity/设备验收。实现细节及历史验证记录见仓库 `tests/reports/`，不作为技能操作步骤。
+- Windows Editor 6.1.4 已有隔离实测，未覆盖所有对象/业务组合；不等于业务工程发布和 Unity/设备验收。实现和自动回归入口见 `plugin/` 与 `tests/`；临时验证报告和截图仅本地保存，不纳入 Git。
 
 ## 文件变动同步矩阵与对照检查
 

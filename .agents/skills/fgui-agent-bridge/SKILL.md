@@ -121,15 +121,15 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 脚本会先校验所选目录，再写入目标工程的 `plugins/agent-bridge/`；无效目录或取消选择时不得写入。自动化环境可改用 `--project PATH --apply`。
 
-首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.12.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
+首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.12.1` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
 
 ```bash
-git clone --branch v0.12.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.12.1 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
 
-已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.12.0`、`git switch --detach v0.12.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
+已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.12.1`、`git switch --detach v0.12.1` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
 
 Codex 安装采用两层配置，完整示例见源仓库 README 的安装指南：
 
@@ -189,7 +189,7 @@ uv run fgui-agent --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT update --pull --a
 3. 更新 README、当前能力参考和本 Skill。
 4. 核对插件 capability、Action 分发、Python MCP 装饰器、CLI parser 与文档。
 5. 检查同步脚本仍只写入受管理文件，默认保持 dry-run。
-6. 确认没有提交 `.agent/`、`.venv/`、`__pycache__/`、`node_modules/`、`main.js.map` 或个人绝对路径。
+6. 确认没有提交 `.agent/`、`.venv/`、`__pycache__/`、`node_modules/`、`main.js.map`、临时验证报告/截图或个人绝对路径；回归测试和可复用夹具正常入库。
 
 推荐静态检查：
 
@@ -208,7 +208,7 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
-- `0.12.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
+- `0.12.1` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。

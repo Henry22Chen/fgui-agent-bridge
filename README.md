@@ -2,7 +2,7 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.12.0`
+- **版本**：`0.12.1`
 - **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
@@ -59,7 +59,9 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 
 安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
-当前发布版本为 `0.12.0`，对应 Git 标签 `v0.12.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+当前发布版本为 `0.12.1`，对应 Git 标签 `v0.12.1`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+
+`0.12.1` 将任务范围内的源 XML 编辑、保存/重载授权和最终工具能力缺口报告规则纳入固定标签安装；协议与 89 个工具接口保持兼容。原 `v0.12.0` 标签保留。
 
 组件实例属性能力需要 Bridge 和插件 `0.11.0`，新增接口见[组件属性说明](.agents/skills/fgui-agent-bridge/references/component-properties.md)。升级后重新加载插件及 MCP 会话，并分别核对两端达到项目指定版本。
 
@@ -71,7 +73,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
 源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
-安装版本：0.12.0，Git 标签 v0.12.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
+安装版本：0.12.1，Git 标签 v0.12.1；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
@@ -88,7 +90,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
-git clone --branch v0.12.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.12.1 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
@@ -96,8 +98,8 @@ uv sync --frozen
 检出标签后处于 detached HEAD 是固定版本安装的正常状态。已有 Bridge 安装先运行 `git status --short` 核对并保留未提交改动，再切换到项目指定的标签：
 
 ```bash
-git fetch origin tag v0.12.0
-git switch --detach v0.12.0
+git fetch origin tag v0.12.1
+git switch --detach v0.12.1
 uv sync --frozen
 ```
 
@@ -431,7 +433,7 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 - 获取图片失败返回 `manual_required`、原因和人工检查指引，**必须要求用户自行验证，保留已完成修改，不自动 undo/discard**。结构、持久化与视觉结论分别报告。
 - `spineCaptureSupported` 是已测捕获路径的能力信息（6.1.4 实测），`spinePresentInTree` 仅表示存在资源；`spineCaptured=null` 表示本次图像尚需观察，不能由对象树自动判定成功。
 - CLI 对应 `get-loader3d --id ID`、`set-loader3d --id ID '{"skinName":"default"}' --save`、`capture-document --scale 1`。CLI 返回截图文件元数据，MCP 才返回图像块。
-- 不自动发布 UI 包，不验证 Unity 运行时换装。实机结果和限制见 `tests/reports/spine-visual-validation.md`。
+- 不自动发布 UI 包，不验证 Unity 运行时换装。自动回归入口见 `tests/test_spine_capture.py`；历史人工验证记录仅本地保存。
 
 截图实现先以独立 UpdateContext 更新组件，消除 Editor 外层视口裁剪，再 GetScreenShot；finally 恢复 Stage 渲染并释放返回纹理。该处理已用高于视口的混合组件验证。
 
@@ -446,7 +448,7 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 - Loader3D 实际修改后清空旧 Agent undo/redo；校验失败、无变化操作保留原历史。保存失败仍清空旧历史；完整回退恢复写入前的 dirty 状态。MCP 原生 undo/redo 回退保持未保存 Loader3D 修改标记，保存或放弃后结束该保护。
 - 异步响应在认领请求时固定目标工程目录，成功/失败回调不使用可能已切换的全局目录。
 - PNG 除块 CRC 外，还验证有界 zlib 解压、完整流、精确扫描行长度与滤波器值。支持 Unity 非交错 8-bit 灰度/RGB/灰度 Alpha/RGBA 截图；坏图或其它编码转 `manual_required`，要求用户自行验证，不回滚修改。
-- 验证与文件索引见 `tests/reports/spine-fixer-review-fixes.md`。
+- 自动回归入口见 `tests/test_spine_capture.py` 和 `tests/spine_fix_harness.cjs`。
 
 ## Controller 基础编辑（0.8.6）
 
@@ -464,7 +466,7 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 CLI：`controllers`、`create-controller State --pages Idle Active --save`、`add-controller-page State Disabled`、`rename-controller-page State Enabled --page-id 1`、`set-controller-page State --page-index 1 --save`。全局 `--project` 放在子命令前。没有新增删除命令。
 
-验证结果及文件索引：`tests/reports/controller-basic-editing.md`。
+自动回归入口见 `tests/test_controllers.py`。
 
 ## Gear 编辑（0.8.7）
 
@@ -496,7 +498,7 @@ fgui_set_gear("display", "State", object_name="badge", visible_page_ids=["1"], s
 
 CLI 示例：`set-gear text State '{"defaultValue":"其他","pageValues":[{"pageId":"1","value":"已领取"}]}' --name title --save`。CLI JSON 使用 camelCase；全局 `--project` 放在子命令前。
 
-截图失败仍要求用户人工验证，保留修改。六类 Gear 的实机样本、测试与文件索引见 `tests/reports/gear-editing.md`。
+截图失败仍要求用户人工验证，保留修改。六类 Gear 的自动回归入口见 `tests/test_gears.py`；临时报告和截图仅本地保存。
 
 ## 控制器联动（0.8.8）
 
