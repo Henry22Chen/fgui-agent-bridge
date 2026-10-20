@@ -30,7 +30,11 @@ mcp = FastMCP(
         "Gear 编辑前先读取配置；set_gear 完整替换一个 Gear，未列页面回退默认值。display 空列表表示全页可见。"
         "Spine 修复会保存所属包；插入或明确绑定 Spine 默认修复尺寸、锚点和 PMA，独立于组件 save。"
         "未获取截图时要求用户自行验证，保留修改，不自动回滚。"
-        "只有用户明确要求时才调用保存工具。发布前先调用 fgui_get_publish_settings，"
+        "已授权界面任务内可自主编辑源 XML，无需另行许可；Editor 持有文档时先 begin_external_edit，写后 finish_external_edit 并回读。"
+        "确认无人持有或独占隔离工程时可离线编辑并验证 XML/ID/引用；MCP 离线不代表无人持有，不覆盖用户未保存内容或并发变化。"
+        "因缺少 MCP 工具接口而转用 XML，最终完成报告必须单列工具能力缺口：缺失接口/能力、替代原因、修改的相对路径/行号与对象/字段范围、"
+        "检查及 Editor 重载结果、未验证事项和接口补齐建议；连接、版本、参数错误或现有接口限制按实际原因区分。"
+        "任务所需保存和重载在既有授权内执行，不保存或丢弃用户未保存内容。发布前先调用 fgui_get_publish_settings，"
         "并确认用户要求的包范围后再调用 fgui_publish。"
     ),
 )
@@ -795,7 +799,7 @@ def fgui_capture_states(document_url: str, states: list[dict[str, Any]], scale: 
 
 @mcp.tool()
 def fgui_begin_external_edit(document_url: str) -> dict[str, Any]:
-    """已授权 XML 编辑的只读交接：要求当前文档干净，返回绑定原生文档及完整内存快照的 token/文件路径；不保存。"""
+    """已授权界面任务内的 XML 编辑交接，无需另行申请 XML 许可。要求当前文档干净，返回绑定原生文档及完整快照的 token/文件路径；不保存。因缺少工具接口而转用 XML 时，最终报告须说明具体缺口、修改范围与校验/重载结果。"""
     return _client.call("begin_external_edit", {"documentUrl": document_url})
 
 

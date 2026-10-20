@@ -237,7 +237,7 @@ uv run python scripts/sync_to_project.py \
 
 用户级 MCP 配置、本地项目配置中的 `fgui` 片段、本机绝对路径、密钥、`.venv/` 和运行时 `.agent/` 不提交。项目 `.codex/config.toml` 若完全按本地配置管理，应加入业务仓库的 `.gitignore`；已跟踪该文件的项目按上文保留其他共享设置。
 
-其他开发者拉取后，Codex 在开始 FairyGUI 任务时按入口检查：已有 MCP 则验证当前工程；本机只有 Bridge 则询问是否配置；未找到 Bridge 则询问已有位置或是否安装。仅有项目级路径配置不代表本机已安装 MCP。用户拒绝后，本次任务不再提示，不使用 MCP，也不自动改用 CLI 或直接修改 XML，可提供只读分析与手工操作步骤；用户另行明确授权其他编辑方式时按其要求处理。
+其他开发者拉取后，Codex 按任务所需选择 Editor API、批量接口或源 XML。只读或能用 XML 完成的已授权任务不以 MCP 安装为前置条件；确需 Editor 能力时，再检查现有配置并在缺失时询问安装或配置。仅有项目级路径不代表 MCP 已安装；用户拒绝后本次不再提示或调用 MCP/CLI，仍可在界面任务授权内编辑 XML。修改前须确认没有用户未保存内容或并发写入冲突。
 
 提示由 Agent 在处理 FairyGUI 任务时遵循上述约定发起，Git 拉取本身不会安装 MCP 或弹出提示。其他客户端需在其对应的 Agent 指令入口引用同一规范。
 
@@ -341,7 +341,7 @@ uv run fgui-agent preview-transition play fadeIn
 
 整页布局优先使用 `fgui_get_objects → fgui_apply_batch → fgui_capture_states`：批量绑定目标文档/revision，Editor 分配新控件 ID，按操作键查询回执以避免超时重复创建。默认摘要返回、不保存；失败停止但不是原子回滚。多状态返回一张编号联系图，完整标签和原图路径在 metadata 中。详见[批量计划示例](.agents/skills/fgui-agent-bridge/references/editing-plans.md)和[方案/验收](docs/performance-plan.md)。
 
-已明确授权直接编辑 XML 时，用 `fgui_begin_external_edit` 取得干净文档交接令牌，外部写入后用 `fgui_finish_external_edit` 在完整内存快照未变的条件下重载。不会自动保存、发布或覆盖外部文件。素材规划可用 `uv run python scripts/inspect_design_assets.py PATH` 读取 PNG 可见边界；PSD 结构读取需先 `uv sync --extra design`。
+已授权界面任务可自主选择直接编辑源 XML，无需另行申请许可。Editor 持有目标文档时，用 `fgui_begin_external_edit` 取得干净文档交接令牌，写入后用 `fgui_finish_external_edit` 在完整内存快照未变时重载并回读；确认无人持有或独占隔离工程时，可离线编辑并验证 XML/ID/资源引用及 package.xml。不能仅凭 MCP 离线判断无人持有；不覆盖用户未保存内容或并发变化。任务所需保存和重载在既有授权内执行，发布按用户授权范围处理。因缺少 MCP 工具接口而转用 XML，必须在最终完成报告单列“工具能力缺口”，说明具体缺失接口、替代原因、修改路径/行号及范围、检查和重载结果、未验证事项与补齐建议，并区分连接、版本、参数或接口限制等其他原因。素材规划可用 `uv run python scripts/inspect_design_assets.py PATH` 读取 PNG 可见边界；PSD 结构读取需先 `uv sync --extra design`。
 
 批量几何设置先预检自动尺寸与源尺寸约束，再设置 Pivot/尺寸，最后设置坐标；调用方 JSON 顺序不会改变结果。文本描边/阴影参数需显式启用对应效果。`fgui_list_items` 返回 `{package, items}` 对象；`fgui_verify_document` 支持引用组件省略的默认尺寸和文本效果属性。GearColor 本身已支持描边色，Gear 最终外观仍受自动尺寸、布局和所选控制器页影响。
 

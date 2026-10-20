@@ -78,7 +78,7 @@
 ## 组件与动画语义
 
 - **计划与性能**：批量只操作一个活动文档，必须匹配 revision；允许操作/原生参数见[计划示例](editing-plans.md)。ref 仅用于创建，引用必须向后使用；Editor 分配 ID。dry_run 只预检结构/作用域/引用，动态原生约束执行时校验。单步保存、导入发布、切换文档、任意脚本均禁止。失败停止、不自动保存/回滚；同操作键同参数只返回回执，不重复创建。回执仅限同 Editor 进程，unknown/running 不代表可安全重试。
-- **外部编辑与预览**：XML 交接令牌绑定原生文档和完整快照，Editor 有新内容时拒绝重载；allow_unchanged_dirty 只能在完整快照一致时显式使用。多状态截图逐状态从原控制器基线开始，finally 恢复并回读完整快照；只适用普通设计编辑态，不承诺恢复运行预览业务副作用。
+- **外部编辑与预览**：已授权界面任务可自主编辑源 XML，无需单独许可。Editor 持有文档时交接干净文档，令牌绑定原生实例和完整快照，有新内容时拒绝重载；allow_unchanged_dirty 只能在完整快照一致时显式使用。确认无人持有或独占隔离工程时可离线编辑并校验，不能把 MCP 离线视为无人持有。因缺少工具接口而改用 XML，最终报告必须列出具体缺口、原因、修改路径/行号与范围、检查及重载结果、未验证事项和补齐建议。多状态截图逐状态从原控制器基线开始，finally 恢复并回读完整快照；只适用普通设计编辑态，不承诺恢复运行预览业务副作用。
 
 - **原生编辑**：只修改当前文档直属对象，嵌套定义先打开所属组件；ScrollPane 仅允许根组件或原生 List。按钮绑定引用父控制器名称和稳定页面 ID，不重写父控制器首页。分组边界由成员决定，空分组不会被 Editor 保存；创建并保存时需传成员。新接口实际修改清除旧 Agent 历史，无完整结构撤销，失败返回可能已发生的修改，不伪称回滚。
 - **布局配置**：List layout 为 `column/row/flow_hz/flow_vt/pagination`，repeatX/Y 为列数/行数（0 自动计算），分页还需配置 ScrollPane。overflow 为 `visible/hidden/scroll`，scroll 为 `horizontal/vertical/both`，scrollBarDisplay 为 `default/visible/auto/hidden`；pageMode 只修改对应位并保留其它 scrollBarFlags。Loader fill 为 `none/scale/scaleMatchHeight/scaleMatchWidth/scaleFree/scaleNoBorder`，`scale` 为等比适配。

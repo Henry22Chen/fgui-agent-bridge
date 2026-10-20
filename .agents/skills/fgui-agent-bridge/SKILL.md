@@ -50,7 +50,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 
 - 多对象计划优先 `fgui_apply_batch`，不要在 exec 内循环调用逐属性 MCP。明确 document_url、expected_revision 和 operation_key；默认摘要、不保存，创建 ref 后用 `$ref` 引用 Editor 分配的 ID。先检查 status，失败可部分执行；超时先 `fgui_get_batch_result`，unknown 不代表未执行。格式见[计划示例](references/editing-plans.md)。
 - 按明确状态矩阵用 `fgui_capture_states` 一次截图并恢复指定控制器，联系图编号对应 metadata 标签；集中比较同画布/同状态，不能把生成图当视觉通过。
-- 用户已明确授权 XML 编辑时，先 `fgui_begin_external_edit` 交接干净文档；外部写入后 `fgui_finish_external_edit` 仅在完整内存快照未变时重载。陌生 dirty 修改不得覆盖；不自动保存或发布。调用计时看 `fgui_diagnostics`，它不包含调用端或模型耗时。
+- 已授权的界面任务可自主选择源 XML 编辑，无需另行申请许可；只读分析可直接读取 XML。Editor 持有目标文档时，先 `fgui_begin_external_edit` 交接干净文档，写入后 `fgui_finish_external_edit` 在完整快照未变时重载并回读；确认无人持有或独占隔离工程时可离线编辑并检查 XML/ID/引用。不得仅凭 MCP 离线判断无人持有，不覆盖用户未保存内容或并发变化。完整流程与缺口报告见[编辑计划](references/editing-plans.md)。调用计时看 `fgui_diagnostics`。
 
 - 新建组件使用 `fgui_create_component`，明确包、目录、名称、宽高、导出状态和冲突策略。
 - 原生 Text/RichText/InputText/Loader/List/Group/Graph 使用 `fgui_create_object`，创建到当前文档根下。保存分组必须传 `group_member_ids`，分组边界由成员决定；默认不保存，无完整结构撤销。
@@ -71,7 +71,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - 状态编辑：先读取 `fgui_get_controllers` / `fgui_get_gears` / `fgui_get_controller_actions`，再编辑页面、Gear 或联动。页面优先用稳定 ID；Gear set 完整替换单个 Gear，Action upsert 省略索引为追加、指定索引为完整替换单条，增删后重读索引。作用于当前根控制器或直属对象；联动可引用直属子组件，不写子组件资源。具体格式见能力参考。
 - 属性修改（如 `text`、`icon`、`font` 等白名单属性）进入 Agent 属性事务栈；结构创建、插入和删除没有完整结构快照撤销。
 - 文档与持久化验证：使用 `fgui_verify_document` 重新读取活动文档对象树并可传入 `target + expected` 比对组件 XML 磁盘持久化内容；无 `expected` 时仅作为对象树快照；指定 expected 时默认省略整树，需要时传 include_tree=true。
-- 保存使用 `fgui_save_document` 或 `fgui_save_all`；放弃全部未保存修改使用 `fgui_discard_document`。
+- 保存使用 `fgui_save_document` 或 `fgui_save_all`；已授权任务所需保存和重载无需另行确认，但须先确认不会包含用户或来源不明的未保存修改。放弃全部未保存修改使用 `fgui_discard_document`，不得用它丢弃用户内容。
 - 视觉检查用 `fgui_capture_document` 获取图像后实际观察资源、布局、遮挡与可见性，大体正确即可，不要求帧或像素一致。`pending_review` 尚未验收；缺图返回 `manual_required`，要求用户自行验证并保留修改，不因缺图 undo/discard。
 
 ### 3. 发布
@@ -110,7 +110,7 @@ uv run fgui-agent --project /ABSOLUTE/PATH/TO/FAIRYGUI-PROJECT verify-document -
 - FairyGUI Editor 插件安装到每个目标 FairyGUI 工程的 `plugins/agent-bridge/`。
 - MCP/CLI 从本机固定目录中的独立 Bridge 仓库或已安装的 Python 工具环境运行，多个工作副本复用，不放入 FairyGUI 工程。
 - Skill 可选安装到 Codex 操作的目标代码仓库 `.agents/skills/fgui-agent-bridge/`。
-- 团队操作入口由业务根目录 `AGENTS.md` 引用 `FairyGUI-Editor-操作规范.md`，只在 FairyGUI 任务中检查环境；缺少 MCP 时先询问安装或配置，拒绝后不自动调用 MCP/CLI 或直接改 XML。
+- 团队操作入口由业务根目录 `AGENTS.md` 引用 `FairyGUI-Editor-操作规范.md`；只读或能用源 XML 完成的已授权任务不以 MCP 为前置条件。确需 Editor 能力时再询问安装或配置；用户拒绝后不调用 MCP/CLI，仍可按任务授权及文档归属检查编辑 XML。
 - `.agent/` 是目标 FairyGUI 工程生成的运行时队列，不是安装文件，也不纳入 Git。
 
 普通使用者优先通过同步脚本选择 FairyGUI 工程并安装插件：
@@ -232,3 +232,4 @@ git diff --check
 - 是否保存、发布、放弃或同步，以及作用范围；
 - 执行了哪些静态检查、MCP 握手和编辑器验证；结构、持久化和视觉结论分开报告；
 - 哪些真实平台或环境仍未验证。
+- 因缺少 MCP 工具接口而转用 XML 时，必须在最终完成报告中单列“工具能力缺口”：具体缺失接口/能力、替代原因、修改的相对路径/行号与对象/字段范围、校验结果、Editor 重载情况、未验证事项及接口补齐建议。区分真正缺失接口、旧版本未加载、连接失败、参数错误和现有接口限制，不得仅在过程中提及后省略。
