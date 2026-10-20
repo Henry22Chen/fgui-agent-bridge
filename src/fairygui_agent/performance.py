@@ -19,6 +19,8 @@ BATCH_FIELDS = {
     "set_properties": {"target", "properties"}, "set_text_style": {"target", "style"},
     "set_button_binding": {"target", "settings"}, "set_list_settings": {"target", "settings"},
     "set_list_item_resources": {"target", "settings"},
+    "set_group_settings": {"target", "settings"}, "set_input_settings": {"target", "settings"}, "set_mask_settings": {"settings"},
+    "replace_object_resource": {"target", "resourceURL", "expectedType", "preserveSize"},
     "set_scroll_settings": {"target", "settings"}, "set_loader": {"target", "settings"},
     "set_group": {"target", "groupId"}, "add_relation": {"target", "relationTargetId", "relationType", "usePercent"},
     "remove_relation": {"target", "relationTargetId", "relationType"},

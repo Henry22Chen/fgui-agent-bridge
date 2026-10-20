@@ -75,6 +75,7 @@ PERFORMANCE_CAPABILITIES = frozenset({"apply_batch", "get_batch_result", "get_ob
 COMPONENT_PROPERTY_CAPABILITIES = frozenset({"get_component_instance", "set_component_instance_controller", "set_component_instance_property",
     "get_component_properties", "upsert_component_property", "remove_component_property", "set_controller_properties"})
 LIST_ITEM_CAPABILITIES = frozenset({"get_list_item_resources", "set_list_item_resources"})
+EDITOR_SETTING_CAPABILITIES = frozenset({"get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings"})
 
 
 class BridgeError(RuntimeError):
@@ -247,6 +248,24 @@ class BridgeClient:
         requested = {action}
         if action == "apply_batch" and isinstance((params or {}).get("operations"), list):
             requested.update(op.get("action") for op in params["operations"] if isinstance(op, dict) and isinstance(op.get("action"), str))
+        required_settings = requested & EDITOR_SETTING_CAPABILITIES
+        # 同名旧接口不会声明新增字段的语义，必须用能力标记校验，批量也不能绕过。
+        operations = [{"action": action, "params": params or {}}]
+        if action == "apply_batch":
+            operations = (params or {}).get("operations", [])
+        for op in operations:
+            if not isinstance(op, dict) or not isinstance(op.get("params"), dict):
+                continue
+            fields = op["params"]
+            if op.get("action") == "set_list_settings" and "clearOnPublish" in (fields.get("settings") or {}):
+                required_settings.add("list_clear_on_publish")
+            if op.get("action") == "replace_object_resource":
+                # 自动类型推断需要新插件支持；显式 image 仍可与旧版协作。
+                if fields.get("expectedType", "") != "image":
+                    required_settings.add("replace_component_resource")
+        missing = required_settings - set(status.get("capabilities", []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少编辑设置能力：{', '.join(sorted(missing))}，请同步并重新加载 0.13.0 或更高版本插件。")
         missing = (requested & LIST_ITEM_CAPABILITIES) - set(status.get("capabilities", []))
         if missing:
             raise BridgeError(f"FairyGUI Agent Bridge 缺少列表项编辑能力：{', '.join(sorted(missing))}，请同步并重新加载 0.12.0 或更高版本插件。")

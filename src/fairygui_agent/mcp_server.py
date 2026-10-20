@@ -720,9 +720,13 @@ def fgui_set_property(
 
 
 @mcp.tool()
-def fgui_replace_object_resource(resource_url: str, object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, expected_type: str = "image", state: str | None = None, save: bool = False, verify: bool = True) -> dict[str, Any]:
-    """通过 Editor API 替换 Image/Loader 图片引用；保存后默认比对磁盘 XML。Button 状态暂不支持。"""
-    params: dict[str, Any] = {"target": _target(object_id, object_path, object_name), "resourceURL": resource_url, "expectedType": expected_type, "save": save, "verify": verify}
+def fgui_replace_object_resource(resource_url: str, object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, expected_type: str = "", state: str | None = None, save: bool = False, verify: bool = True, preserve_size: bool = True) -> dict[str, Any]:
+    """原生替换 Image/Loader 图片或直属组件实例。expected_type 为空时按对象推断，否则校验 image/component。
+
+    默认保留尺寸；preserve_size=false 不额外恢复尺寸，遵循 Editor 原生替换行为。组件保存始终核对完整 XML。组件内部结构和覆盖遵循 Editor 替换语义，返回前后 overrides，旧路径不保证继承。
+    Button 状态暂不支持；没有完整 Agent 撤销，失败不自动回滚。
+    """
+    params: dict[str, Any] = {"target": _target(object_id, object_path, object_name), "resourceURL": resource_url, "expectedType": expected_type, "save": save, "verify": verify, "preserveSize": preserve_size}
     if state: params["state"] = state
     return _client.call("replace_object_resource", params)
 
@@ -867,7 +871,7 @@ def fgui_get_list_settings(object_id: str | None = None, object_path: str | None
 
 @mcp.tool()
 def fgui_set_list_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
-    """设置 List 的 layout、repeatX/repeatY、lineGap/columnGap、align/vAlign、autoResizeItem、selectionMode。分页滚动另用 set_scroll_settings，默认不保存。"""
+    """设置 List 的 layout、repeatX/repeatY、lineGap/columnGap、align/vAlign、autoResizeItem、selectionMode、clearOnPublish。发布清空不删除编辑器预置项；默认不保存。"""
     return _editing_call("set_list_settings", object_id, object_path, object_name, settings=settings, save=save)
 
 
@@ -898,6 +902,42 @@ def fgui_get_scroll_settings(object_id: str | None = None, object_path: str | No
 def fgui_set_scroll_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
     """设置 overflow、scroll、scrollBarDisplay、scrollBarFlags、pageMode、pageControllerName；分页位保留其他滚动标志，默认不保存。"""
     return _editing_call("set_scroll_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_group_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取分组高级模式、布局、间距和主格设置。成员归属另用 get_group。"""
+    return _editing_call("get_group_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_group_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置 advanced、layout(none/hz/vt)、lineGap/columnGap、excludeInvisibles、autoSizeDisabled、hasMainGrid、mainGridIndex。索引按当前组成员从 0 开始；默认不保存。"""
+    return _editing_call("set_group_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_input_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取直属 InputText 的提示文字、长度、字符限制、密码和键盘类型。"""
+    return _editing_call("get_input_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_input_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置 promptText（空串清除）、maxLength（0 不限制）、restrict、password、keyboardType（Editor 枚举整数）。仅 InputText，默认不保存。"""
+    return _editing_call("set_input_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_mask_settings() -> dict[str, Any]:
+    """读取当前根组件的 maskId 和 reversedMask；空 ID 表示没有遮罩。"""
+    return _client.call("get_mask_settings", {})
+
+
+@mcp.tool()
+def fgui_set_mask_settings(settings: dict[str, Any], save: bool = False) -> dict[str, Any]:
+    """设置当前根组件 maskId（直属对象 ID，空串清除）和 reversedMask。清除时重置反向标志；save=true 保存整个组件并核对完整 XML。"""
+    return _client.call("set_mask_settings", {"settings": settings, "save": save})
 
 
 @mcp.tool()

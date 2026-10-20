@@ -11,7 +11,7 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.12.1";
+const BRIDGE_VERSION = "0.13.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1254,6 +1254,8 @@ function writeStatus(): void {
             "upsert_component_property", "remove_component_property", "set_controller_properties",
             "get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
             "get_list_settings", "set_list_settings", "get_list_item_resources", "set_list_item_resources", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
+            "get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings",
+            "list_clear_on_publish", "replace_component_resource",
             "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
         ]
     };
@@ -2173,14 +2175,17 @@ function replaceObjectResource(params: any): any {
     let obj: any = resolveObject(doc, params.target);
     if (params.externalReload) verificationError("unsupported_property", "暂不支持自动 external reload", { stage: "input" });
     const type = String(obj.objectType || "").toLowerCase();
-    if (["image", "loader"].indexOf(type) < 0 || params.state)
-        verificationError("unsupported_property", "可信资源替换目前仅支持 Image/Loader；Button 状态请使用专用 API", { stage: "input" });
+    if (["image", "loader", "component"].indexOf(type) < 0 || params.state)
+        verificationError("unsupported_property", "资源替换支持 Image/Loader/组件实例；Button 状态请使用专用 API", { stage: "input" });
     const url = String(params.resourceURL || params.url || "").trim();
     if (url.indexOf("ui://") !== 0) verificationError("invalid_argument", "resourceURL 必须是 ui:// URL", { stage: "input" });
     const resource = resolveItem({ url });
-    if (resource.type !== FairyEditor.FPackageItemType.IMAGE || (params.expectedType && String(params.expectedType).toLowerCase() !== "image"))
-        verificationError("invalid_argument", "本切片的资源类型必须是 image", { stage: "input", resourceURL: url });
+    const resourceType = type === "component" ? "component" : "image";
+    const nativeType = type === "component" ? FairyEditor.FPackageItemType.COMPONENT : FairyEditor.FPackageItemType.IMAGE;
+    if (resource.type !== nativeType || (params.expectedType && String(params.expectedType).toLowerCase() !== resourceType))
+        verificationError("invalid_argument", `目标要求 ${resourceType} 资源`, { stage: "input", resourceURL: url });
     const canonicalUrl = String(resource.GetURL());
+    if (type === "component") return replaceComponentResource(doc, obj, params, canonicalUrl);
     const before = verifiedObjectValues(obj);
     const expected: any = { id: before.id, name: before.name, type, resourceURL: canonicalUrl };
     const preserveSize = params.preserveSize !== false;
@@ -3971,7 +3976,10 @@ function setButtonBinding(params: any): any {
 }
 
 const LIST_SETTING_SPEC: any = { layout: ["column", "row", "flow_hz", "flow_vt", "pagination"], repeatX: "int", repeatY: "int", lineGap: "number", columnGap: "number",
-    align: ["left", "center", "right"], vAlign: ["top", "middle", "bottom"], autoResizeItem: "boolean", selectionMode: ["single", "multiple", "multipleSingleClick", "none"] };
+    align: ["left", "center", "right"], vAlign: ["top", "middle", "bottom"], autoResizeItem: "boolean", selectionMode: ["single", "multiple", "multipleSingleClick", "none"], clearOnPublish: "boolean" };
+const GROUP_SETTING_SPEC: any = { advanced: "boolean", layout: ["none", "hz", "vt"], lineGap: "number", columnGap: "number",
+    excludeInvisibles: "boolean", autoSizeDisabled: "boolean", hasMainGrid: "boolean", mainGridIndex: "int" };
+const INPUT_SETTING_SPEC: any = { promptText: "string", maxLength: "int", restrict: "string", password: "boolean", keyboardType: "int" };
 const LOADER_SETTING_SPEC: any = { fill: ["none", "scale", "scaleMatchHeight", "scaleMatchWidth", "scaleFree", "scaleNoBorder"], align: ["left", "center", "right"],
     vAlign: ["top", "middle", "bottom"], autoSize: "boolean", shrinkOnly: "boolean", useResize: "boolean" };
 
@@ -4066,8 +4074,76 @@ function setListItemResources(params: any): any {
 
 function readSimpleSettings(obj: any, spec: any): any {
     const out: any = {};
-    for (const k of Object.keys(spec)) out[k] = safeValue(obj[k === "vAlign" ? "verticalAlign" : k]);
+    for (const k of Object.keys(spec)) {
+        const value = obj[k === "vAlign" ? "verticalAlign" : k];
+        // InputText 的空提示/限制在重载后由原生还原为 null；接口统一为空字符串。
+        out[k] = spec[k] === "string" && (value === null || value === undefined) ? "" : safeValue(value);
+    }
     return out;
+}
+
+/** 高级模式先于布局设置；关闭高级模式时保留原生编辑器保存的布局参数。 */
+function setGroupSettings(params: any): any {
+    const doc = getActiveDocument(), obj = editingTarget(params, ["group"]), patch = checkedSettings(params.settings, GROUP_SETTING_SPEC);
+    const mainGrid = patch.hasMainGrid === undefined ? obj.hasMainGrid : patch.hasMainGrid;
+    const index = patch.mainGridIndex === undefined ? obj.mainGridIndex : patch.mainGridIndex;
+    if (patch.hasMainGrid === false && patch.mainGridIndex !== undefined) throw new Error("关闭主格时不能同时指定 mainGridIndex");
+    if (mainGrid && (index < 0 || index >= obj.children.Count)) throw new Error("mainGridIndex 必须引用当前组的成员索引");
+    return editObjectSettings(doc, obj, params, () => readSimpleSettings(obj, GROUP_SETTING_SPEC), patch, () => {
+        for (const k of Object.keys(GROUP_SETTING_SPEC)) if (patch[k] !== undefined) obj[k] = patch[k];
+        obj.UpdateImmdediately();
+    });
+}
+
+function maskSettings(root: any): any {
+    return { maskId: root.mask ? String(root.mask.id) : "", reversedMask: Boolean(root.reversedMask) };
+}
+
+/** 只修改当前根组件；遮罩必须引用同一文档直属的可显示对象，空 ID 解除。 */
+function setMaskSettings(params: any): any {
+    const doc = getActiveDocument(), root = doc.content;
+    const patch = checkedSettings(params.settings, { maskId: "string", reversedMask: "boolean" });
+    const id = patch.maskId === undefined ? maskSettings(root).maskId : patch.maskId;
+    let mask: any = null;
+    if (id) {
+        mask = resolveObject(doc, { id });
+        requireOwnedEditingTarget(doc, mask, false);
+        if (String(mask.objectType).toLowerCase() === "group") throw new Error("分组没有可用的遮罩图形");
+    }
+    if (!mask && patch.reversedMask === true) throw new Error("反向遮罩需要先指定 maskId");
+    // 清除遮罩时同时清除反向标志，避免隐藏的旧状态影响下一次绑定。
+    const desired = { maskId: id, reversedMask: mask ? (patch.reversedMask === undefined ? Boolean(root.reversedMask) : patch.reversedMask) : false };
+    return editComponentMetadata(doc, root, params, () => maskSettings(root), !valuesEqual(maskSettings(root), desired), () => {
+        root.mask = mask; root.reversedMask = desired.reversedMask;
+        if (!valuesEqual(maskSettings(root), desired)) throw new Error("Editor 未接受遮罩设置");
+    });
+}
+
+/** 使用原生替换保持父文档引用；内部结构和覆盖遵循 Editor 语义并回传前后清单。 */
+function replaceComponentResource(doc: any, source: any, params: any, url: string): any {
+    requireOwnedEditingTarget(doc, source, false);
+    if (url === String(doc.content.resourceURL)) throw new Error("组件实例不能替换为当前组件自身");
+    if (params.preserveSize !== undefined && typeof params.preserveSize !== "boolean") throw new Error("preserveSize 必须是布尔值");
+    let obj = source;
+    const geometryKeys = ["id", "name", "x", "y", "width", "height", "pivotX", "pivotY", "anchor", "scaleX", "scaleY", "rotation", "alpha", "visible", "touchable", "grayed", "groupId"];
+    const snapshot = () => {
+        const outer: any = {};
+        geometryKeys.forEach(k => { if (obj[k] !== undefined) outer[k] = safeValue(obj[k]); });
+        const bindings = gearXmlData(obj.Write()).children.filter(node => node.name === "relation" || node.name.startsWith("gear"));
+        return { resourceURL: String(obj.resourceURL), outer, bindings, overrides: componentPropertyList(obj).filter(p => p.value !== null && p.value !== undefined)
+            .map(p => ({ target: String(p.target), propertyId: Number(p.propertyId), value: safeValue(p.value) })) };
+    };
+    const before = snapshot();
+    return editComponentMetadata(doc, { id: source.id, name: source.name, objectType: source.objectType }, params, snapshot, before.resourceURL !== url, () => {
+        doc.SetSelection(obj); doc.ReplaceSelection(url);
+        // 原生替换可能销毁旧实例，必须通过稳定 ID 重新获取，不能再访问旧引用。
+        obj = resolveObject(doc, { id: before.outer.id });
+        if (params.preserveSize !== false) { obj.width = before.outer.width; obj.height = before.outer.height; }
+        const after = snapshot(), preserved = { ...before.outer };
+        if (params.preserveSize === false) { delete preserved.width; delete preserved.height; }
+        if (after.resourceURL !== url || !valuesEqual(before.bindings, after.bindings) || Object.keys(preserved).some(k => !valuesEqual(preserved[k], after.outer[k])))
+            throw new Error("Editor 替换未保留对象标识或外层属性；请检查 before/after，失败不自动回滚");
+    });
 }
 
 function setSimpleSettings(params: any, type: string, spec: any): any {
@@ -4222,6 +4298,8 @@ const BATCH_FIELDS: { [action: string]: string[] } = {
     set_properties: ["target", "properties"], set_text_style: ["target", "style"],
     set_button_binding: ["target", "settings"], set_list_settings: ["target", "settings"],
     set_list_item_resources: ["target", "settings"],
+    set_group_settings: ["target", "settings"], set_input_settings: ["target", "settings"], set_mask_settings: ["settings"],
+    replace_object_resource: ["target", "resourceURL", "expectedType", "preserveSize"],
     set_scroll_settings: ["target", "settings"], set_loader: ["target", "settings"], set_group: ["target", "groupId"],
     add_relation: ["target", "relationTargetId", "relationType", "usePercent"], remove_relation: ["target", "relationTargetId", "relationType"],
     set_gear: ["target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds"],
@@ -4482,7 +4560,8 @@ function handleCommand(request: AgentRequest): any {
         set_image_settings: true, create_object: true, set_properties: true, set_button_binding: true, set_list_settings: true, set_list_item_resources: true,
         set_component_instance_controller: true, set_component_instance_property: true, upsert_component_property: true,
         remove_component_property: true, set_controller_properties: true,
-        set_scroll_settings: true, set_group: true, add_relation: true, remove_relation: true, set_loader: true,
+        set_scroll_settings: true, set_group: true, set_group_settings: true, set_input_settings: true, set_mask_settings: true,
+        get_group_settings: true, get_input_settings: true, get_mask_settings: true, add_relation: true, remove_relation: true, set_loader: true,
         set_text_style: true, replace_object_resource: true,
         set_gear: true,
         upsert_controller_action: true, remove_controller_action: true,
@@ -4543,6 +4622,12 @@ function handleCommand(request: AgentRequest): any {
         case "set_scroll_settings": return setScrollSettings(params);
         case "get_group": { const obj = editingTarget(params); return { target: targetSummary(obj, params.target), groupId: obj.groupId || "" }; }
         case "set_group": return setGroup(params);
+        case "get_group_settings": { const obj = editingTarget(params, ["group"]); return { target: targetSummary(obj, params.target), settings: readSimpleSettings(obj, GROUP_SETTING_SPEC) }; }
+        case "set_group_settings": return setGroupSettings(params);
+        case "get_input_settings": { const obj = editingTarget(params, ["inputtext"]); return { target: targetSummary(obj, params.target), settings: readSimpleSettings(obj, INPUT_SETTING_SPEC) }; }
+        case "set_input_settings": return setSimpleSettings(params, "inputtext", INPUT_SETTING_SPEC);
+        case "get_mask_settings": return { target: targetSummary(getActiveDocument().content, null), settings: maskSettings(getActiveDocument().content) };
+        case "set_mask_settings": return setMaskSettings(params);
         case "get_relations": { const obj = editingTarget(params); return { target: targetSummary(obj, params.target), relations: relationsSnapshot(obj), relationTypes: RELATION_NAMES }; }
         case "add_relation": return editRelation(params, false);
         case "remove_relation": return editRelation(params, true);

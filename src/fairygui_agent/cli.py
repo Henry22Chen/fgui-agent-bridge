@@ -251,7 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
     resource_parser = subparsers.add_parser("replace-object-resource", help="替换对象资源引用")
     _add_target_arguments(resource_parser)
     resource_parser.add_argument("resource_url")
-    resource_parser.add_argument("--expected-type", default="image")
+    resource_parser.add_argument("--expected-type", default="", choices=("", "image", "component"))
+    resource_parser.add_argument("--no-preserve-size", action="store_true", help="不额外恢复尺寸，遵循 Editor 原生替换行为")
     resource_parser.add_argument("--state")
     resource_parser.add_argument("--save", action="store_true")
     resource_parser.add_argument("--no-verify", action="store_true")
@@ -340,9 +341,10 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--insert-index", type=int)
     native.add_argument("--group-member-ids", help="JSON 对象 ID 数组；保存分组时必填")
     native.add_argument("--save", action="store_true")
-    for command in ("set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
+    for command in ("set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-group-settings", "set-group-settings", "get-input-settings", "set-input-settings", "get-mask-settings", "set-mask-settings", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
         p = subparsers.add_parser(command, help="读取/编辑当前文档直属对象，默认不保存")
-        _add_target_arguments(p)
+        if command not in ("get-mask-settings", "set-mask-settings"):
+            _add_target_arguments(p)
         if command.startswith("set-"):
             help_text = "JSON：defaultItem、最终有序 items（sourceIndex 保留原项；可改 url/标题/图标/properties）" if command == "set-list-item-resources" else "分组 ID（空串解除）或 JSON 设置"
             p.add_argument("group_id" if command == "set-group" else "settings", help=help_text)
@@ -708,18 +710,20 @@ def main() -> int:
             params = {"target": target_from_args(args)}
         elif args.command == "replace-object-resource":
             action = "replace_object_resource"
-            params = {"target": target_from_args(args), "resourceURL": args.resource_url, "expectedType": args.expected_type, "verify": not args.no_verify, "save": args.save}
+            params = {"target": target_from_args(args), "resourceURL": args.resource_url, "expectedType": args.expected_type, "verify": not args.no_verify, "save": args.save, "preserveSize": not args.no_preserve_size}
             if args.state: params["state"] = args.state
         elif args.command == "get-text-style":
             action = "get_text_style"
             params = {"target": target_from_args(args)}
-        elif args.command in ("get-image-settings", "set-image-settings", "create-object", "set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
+        elif args.command in ("get-image-settings", "set-image-settings", "create-object", "set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-group-settings", "set-group-settings", "get-input-settings", "set-input-settings", "get-mask-settings", "set-mask-settings", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
             action = args.command.replace("-", "_")
             if args.command == "create-object":
                 params = {"objectType": args.object_type, "x": args.x, "y": args.y, "width": args.width, "height": args.height, "save": args.save}
                 if args.name is not None: params["name"] = args.name
                 if args.insert_index is not None: params["insertIndex"] = args.insert_index
                 if args.group_member_ids is not None: params["groupMemberIds"] = load_json_value(args.group_member_ids)
+            elif args.command in ("get-mask-settings", "set-mask-settings"):
+                params = {}
             elif "image-settings" in args.command:
                 params = {"url": args.url}
             else:

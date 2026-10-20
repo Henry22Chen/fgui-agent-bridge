@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.12.1`（Git 标签 `v0.12.1`）
+- Bridge 版本：`0.13.0`（Git 标签 `v0.13.0`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：89；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
+- MCP 工具数：95；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -39,15 +39,18 @@
 | `fgui_diagnostics` | limit=20（1..100） | 当前 MCP 进程内部计时/字节，既不唤醒也不包含调用端耗时 |
 | `fgui_get_active_document` / `fgui_get_tree` | 无 / `max_depth` | 读取活动文档或对象树 |
 | `fgui_select_object` / `fgui_set_property` | ID、路径或唯一名称 | 选择对象或修改白名单属性 |
-| `fgui_replace_object_resource` | target、resource_url、expected_type、state?、save? | 通过 Editor API 替换 Image/Loader 资源引用，不支持 Button state |
+| `fgui_replace_object_resource` | target、resource_url、expected_type、state?、save? | 原生替换 Image/Loader 或直属组件实例，expected_type 可为 image/component；默认保留尺寸，实例返回前后覆盖清单；不支持 Button state |
 | `fgui_get_text_style` / `fgui_set_text_style` | target、style、save? | 读取或设置文本对象样式并回读 |
 | `fgui_create_object` | `object_type`, name?, x/y/width/height?, insert_index?, group_member_ids?, save=false | 创建 text/richtext/inputtext/loader/list/group/graph；保存 group 必须指定成员 |
 | `fgui_set_properties` | target、`properties`、save=false | 一次预检和批量写入白名单属性；尺寸忽略 Pivot 位移，坐标最后应用 |
 | `fgui_get_image_settings` / `fgui_set_image_settings` | 图片 url 或包/资源定位；修改 `settings`, save=false | 包级缩放/九宫格：`scaleMode=none/9grid/tile`、`scale9Grid={x,y,width,height}`、`gridTile=0..31` |
 | `fgui_get_button_binding` / `fgui_set_button_binding` | target；修改 `settings`, save=false | `controllerName`、`pageId`、`selected`；空控制器名清除绑定 |
-| `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | `layout`、`repeatX/repeatY`、`lineGap/columnGap`、`align/vAlign`、`autoResizeItem`、`selectionMode` |
+| `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | `layout`、`repeatX/repeatY`、`lineGap/columnGap`、`align/vAlign`、`autoResizeItem`、`selectionMode`、`clearOnPublish`（发布清空，不删除编辑器预置项） |
 | `fgui_get_list_item_resources` / `fgui_set_list_item_resources` | target；修改 `settings={defaultItem?,items?}`, save=false | 默认项资源与预置项增删重排、资源/名称/标题/图标/属性覆盖；`sourceIndex` 保留原项，items 完整替换，详见[列表项编辑](list-items.md) |
 | `fgui_get_scroll_settings` / `fgui_set_scroll_settings` | target；修改 `settings`, save=false | 根组件或原生 List：`overflow`、`scroll`、`scrollBarDisplay`、`scrollBarFlags`、`pageMode`、`pageControllerName` |
+| `fgui_get_group_settings` / `fgui_set_group_settings` | target；修改 settings, save=false | 分组 advanced、布局和主格设置，详见[Editor 设置](editor-settings.md) |
+| `fgui_get_input_settings` / `fgui_set_input_settings` | target；修改 settings, save=false | InputText 的 promptText、maxLength、restrict、password、keyboardType |
+| `fgui_get_mask_settings` / `fgui_set_mask_settings` | 当前根，无 target；修改 settings, save=false | maskId、reversedMask，空 ID 清除；引用必须是直属对象 |
 | `fgui_get_group` / `fgui_set_group` | target；修改 `group_id`, save=false | 设置同层分组，空串解除，拒绝循环 |
 | `fgui_get_relations` / `fgui_add_relation` / `fgui_remove_relation` | target；修改 `relation_type`, `relation_target_id=parent`, `use_percent=false`（add）, save=false | 读取可用类型；增删单条关系并保留同目标其它关系，拒绝循环和继承只读关系 |
 | `fgui_get_loader` / `fgui_set_loader` | target；修改 `settings`, save=false | 二维 Loader：`fill`、`align/vAlign`、`autoSize`、`shrinkOnly`、`useResize` |
