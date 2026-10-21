@@ -14,6 +14,7 @@ from .capture import MAX_BYTES, capture_result
 
 
 BATCH_FIELDS = {
+    "set_container_settings": {"settings"},
     "duplicate_objects": {"targets", "offset", "namingPolicy", "names", "externalReferences", "refs"},
     "reorder_objects": {"orderedIds"},
     "create_object": {"objectType", "name", "x", "y", "width", "height", "insertIndex", "groupMemberIds"},

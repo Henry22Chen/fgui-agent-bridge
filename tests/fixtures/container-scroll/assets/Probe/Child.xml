@@ -1,0 +1,1 @@
+<component size="180,90"><displayList><graph id="tile" name="tile" xy="0,0" size="180,90" type="rect" lineSize="0" fillColor="#ff7c3aed"/><text id="caption" name="caption" xy="6,8" size="160,35" fontSize="22" autoSize="none" color="#ffffff" text="List item"/></displayList></component>

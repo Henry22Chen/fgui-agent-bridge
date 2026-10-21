@@ -1,0 +1,1 @@
+<component size="180,16" extention="ScrollBar"><displayList><graph id="bar" name="bar" xy="0,0" size="180,16" type="rect" lineSize="0" fillColor="#ff111827"/><graph id="grip" name="grip" xy="0,0" size="60,16" type="rect" lineSize="0" fillColor="#fffacc15"/></displayList><ScrollBar/></component>

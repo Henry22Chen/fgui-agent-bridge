@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.16.0";
+const BRIDGE_VERSION = "0.17.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1412,6 +1412,7 @@ function writeStatus() {
             "apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit",
             "get_component_instance", "set_component_instance_controller", "set_component_instance_property", "get_component_properties",
             "upsert_component_property", "remove_component_property", "set_controller_properties",
+            "get_container_settings", "set_container_settings", "scroll_settings_extended",
             "get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
             "get_list_settings", "set_list_settings", "get_list_item_resources", "set_list_item_resources", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
             "get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings",
@@ -4769,13 +4770,122 @@ function scrollTarget(params) {
         throw new Error("ScrollPane 设置只支持当前组件根或原生 List；子组件需打开其所属文档");
     return obj;
 }
+const MARGIN_FIELDS = ["left", "right", "top", "bottom"];
+const CONTAINER_LIMITS = ["minWidth", "maxWidth", "minHeight", "maxHeight"];
+const SCROLL_RESOURCES = ["hzScrollBarRes", "vtScrollBarRes", "headerRes", "footerRes"];
+const SCROLL_EXTENDED_FIELDS = ["scrollBarMargin", "clipSoftness", ...SCROLL_RESOURCES];
+/** FMargin、尺寸限制和柔化边缘均为原生 Int32；提前拒绝浮点，不能让 Puerts 静默截断。 */
+function containerInteger(value, label, minimum = 0) {
+    if (typeof value !== "number" || !Number.isInteger(value))
+        throw new Error(`${label} 必须是整数`);
+    return numberValue(value, label, minimum, 1000000);
+}
+function marginSettings(margin) {
+    const value = {};
+    MARGIN_FIELDS.forEach(key => value[key] = Number(margin[key]));
+    return value;
+}
+function marginPatch(value, before) {
+    const patch = visualPatch(value, MARGIN_FIELDS), result = { ...before };
+    Object.keys(patch).forEach(key => result[key] = containerInteger(patch[key], `margin.${key}`, -1000000));
+    return result;
+}
+/** FMargin.Parse 的实际顺序为 top,bottom,left,right；接口始终使用有名字段。 */
+function marginString(value) {
+    return [value.top, value.bottom, value.left, value.right].join(",");
+}
+function containerSettings(root) {
+    const result = { margin: marginSettings(root.margin), hitTestSourceId: root.hitTestSource ? String(root.hitTestSource.id) : "" };
+    CONTAINER_LIMITS.forEach(key => result[key] = Number(root[key]));
+    return result;
+}
+function containerViewport(root) {
+    return { width: Number(root.width), height: Number(root.height), viewWidth: Number(root.viewWidth), viewHeight: Number(root.viewHeight) };
+}
+/** 根定义的命中区域与 mask/opaque 独立；仅接受可供原生像素或形状检测的直属 Image/非空 Graph。 */
+function setContainerSettings(params) {
+    const doc = getActiveDocument(), root = doc.content, before = containerSettings(root);
+    const patch = visualPatch(params.settings, ["margin", "hitTestSourceId", ...CONTAINER_LIMITS]), desired = { ...before };
+    if (patch.margin !== undefined)
+        desired.margin = marginPatch(patch.margin, before.margin);
+    for (const key of CONTAINER_LIMITS)
+        if (patch[key] !== undefined)
+            desired[key] = containerInteger(patch[key], key);
+    for (const axis of ["Width", "Height"])
+        if (desired[`max${axis}`] > 0 && desired[`min${axis}`] > desired[`max${axis}`])
+            throw new Error(`min${axis} 不能超过非零 max${axis}；0 表示未设置限制`);
+    let source = root.hitTestSource;
+    if (patch.hitTestSourceId !== undefined) {
+        if (typeof patch.hitTestSourceId !== "string")
+            throw new Error("hitTestSourceId 必须为字符串，空串清除");
+        desired.hitTestSourceId = patch.hitTestSourceId;
+        source = patch.hitTestSourceId ? editingTarget({ target: { id: patch.hitTestSourceId } }, ["image", "graph"]) : null;
+        if (source && String(source.objectType).toLowerCase() === "graph" && String(source.type) === "empty")
+            throw new Error("空 Graph 没有点击检测图形");
+    }
+    const result = editComponentMetadata(doc, root, params, () => containerSettings(root), !valuesEqual(before, desired), () => {
+        if (patch.margin !== undefined)
+            root.marginStr = marginString(desired.margin);
+        if (CONTAINER_LIMITS.some(key => patch[key] !== undefined)) {
+            // 先解除旧限制再应用合法最终值，避免旧 min/max 与新值交叉时产生中间冲突。
+            CONTAINER_LIMITS.forEach(key => root[key] = 0);
+            CONTAINER_LIMITS.forEach(key => root[key] = desired[key]);
+        }
+        if (patch.hitTestSourceId !== undefined)
+            root.hitTestSource = source;
+        root.UpdateOverflow();
+        if (!valuesEqual(containerSettings(root), desired))
+            throw new Error("Editor 未接受全部根容器设置");
+    });
+    return { ...result, viewport: containerViewport(root) };
+}
 function scrollSettings(obj) {
-    return { overflow: obj.overflow, scroll: obj.scroll, scrollBarDisplay: obj.scrollBarDisplay, scrollBarFlags: obj.scrollBarFlags,
-        pageMode: Boolean(obj.scrollBarFlags & FairyEditor.FScrollPane.PAGE_MODE), pageControllerName: obj.pageController || "" };
+    const result = { overflow: obj.overflow, scroll: obj.scroll, scrollBarDisplay: obj.scrollBarDisplay, scrollBarFlags: obj.scrollBarFlags,
+        pageMode: Boolean(obj.scrollBarFlags & FairyEditor.FScrollPane.PAGE_MODE), pageControllerName: obj.pageController || "",
+        scrollBarMargin: marginSettings(obj.scrollBarMargin), clipSoftness: { x: Number(obj.clipSoftnessX), y: Number(obj.clipSoftnessY) } };
+    SCROLL_RESOURCES.forEach(key => result[key] = obj[key] ? String(obj[key]) : "");
+    return result;
+}
+/** 资源引用只读预检，不能为校验滚动条而切换/修改另一个定义文档。 */
+function scrollResource(value, key, doc) {
+    if (typeof value !== "string" || (value && !value.startsWith("ui://")))
+        throw new Error(`${key} 必须为组件 ui:// URL，空串清除`);
+    if (!value)
+        return "";
+    const item = resolveItem({ url: value });
+    if (item.type !== FairyEditor.FPackageItemType.COMPONENT)
+        throw new Error(`${key} 必须引用组件资源`);
+    if (String(item.GetURL()) === String(doc.content.resourceURL))
+        throw new Error(`${key} 不能引用当前组件自身`);
+    if (key === "hzScrollBarRes" || key === "vtScrollBarRes") {
+        const asset = item.GetAsset();
+        if (!asset || String(asset.extension).toLowerCase() !== "scrollbar")
+            throw new Error(`${key} 必须引用 ScrollBar 扩展组件`);
+        const list = asset.xml.GetNode("displayList"), names = [];
+        if (list)
+            for (let i = 0; i < list.elements.Count; i++)
+                names.push(String(list.elements.get_Item(i).GetAttribute("name")));
+        if (names.filter(name => name === "grip").length !== 1 || names.filter(name => name === "bar").length !== 1)
+            throw new Error("ScrollBar 必须有唯一直属 grip 和 bar 元件");
+    }
+    return String(item.GetURL());
 }
 function setScrollSettings(params) {
-    const doc = getActiveDocument(), obj = scrollTarget(params), patch = checkedSettings(params.settings, { overflow: ["visible", "hidden", "scroll"], scroll: ["horizontal", "vertical", "both"],
-        scrollBarDisplay: ["default", "visible", "auto", "hidden"], scrollBarFlags: "int", pageMode: "boolean", pageControllerName: "string" });
+    const doc = getActiveDocument(), obj = scrollTarget(params), before = scrollSettings(obj);
+    const patch = visualPatch(params.settings, ["overflow", "scroll", "scrollBarDisplay", "scrollBarFlags", "pageMode", "pageControllerName", ...SCROLL_EXTENDED_FIELDS]);
+    const spec = { overflow: ["visible", "hidden", "scroll"], scroll: ["horizontal", "vertical", "both"], scrollBarDisplay: ["default", "visible", "auto", "hidden"], pageMode: "boolean", pageControllerName: "string" };
+    const basic = {};
+    Object.keys(spec).forEach(key => { if (patch[key] !== undefined)
+        basic[key] = patch[key]; });
+    if (Object.keys(basic).length)
+        Object.assign(patch, checkedSettings(basic, spec));
+    if (patch.scrollBarFlags !== undefined)
+        patch.scrollBarFlags = containerInteger(patch.scrollBarFlags, "scrollBarFlags");
+    // pageController 的原生 setter 查询父组件控制器；根定义没有 parent，不能把自身控制器冒充父控制器。
+    if (obj === doc.content && patch.pageControllerName)
+        throw new Error("根定义没有父控制器；pageControllerName 仅能绑定直属 List 的父文档控制器");
+    if (patch.pageControllerName && (patch.overflow === undefined ? obj.overflow : patch.overflow) !== "scroll")
+        throw new Error("绑定分页控制器需要明确 overflow=scroll");
     if (patch.pageControllerName)
         resolveController(doc, patch.pageControllerName);
     const flag = FairyEditor.FScrollPane.PAGE_MODE;
@@ -4784,11 +4894,45 @@ function setScrollSettings(params) {
     if (patch.pageMode !== undefined)
         patch.scrollBarFlags = patch.pageMode ? (patch.scrollBarFlags === undefined ? obj.scrollBarFlags : patch.scrollBarFlags) | flag
             : (patch.scrollBarFlags === undefined ? obj.scrollBarFlags : patch.scrollBarFlags) & ~flag;
-    return editObjectSettings(doc, obj, params, () => scrollSettings(obj), patch, () => {
-        for (const k of ["overflow", "scroll", "scrollBarDisplay", "scrollBarFlags", "pageControllerName"])
-            if (patch[k] !== undefined)
-                obj[k === "pageControllerName" ? "pageController" : k] = patch[k];
+    if (patch.scrollBarMargin !== undefined)
+        patch.scrollBarMargin = marginPatch(patch.scrollBarMargin, before.scrollBarMargin);
+    if (patch.clipSoftness !== undefined) {
+        const soft = visualPatch(patch.clipSoftness, ["x", "y"]);
+        patch.clipSoftness = { ...before.clipSoftness };
+        Object.keys(soft).forEach(key => patch.clipSoftness[key] = containerInteger(soft[key], `clipSoftness.${key}`));
+    }
+    for (const key of SCROLL_RESOURCES)
+        if (patch[key] !== undefined)
+            patch[key] = scrollResource(patch[key], key, doc);
+    const desired = { ...before, ...patch };
+    desired.pageMode = Boolean(desired.scrollBarFlags & flag);
+    if ((SCROLL_RESOURCES.some(key => Boolean(patch[key])) || (patch.scrollBarMargin && MARGIN_FIELDS.some(key => patch.scrollBarMargin[key] !== 0))) && desired.overflow !== "scroll")
+        throw new Error("设置滚动资源或非零滚动条边距需要明确 overflow=scroll，不会隐式切换模式");
+    if ((patch.hzScrollBarRes && desired.scroll === "vertical") || (patch.vtScrollBarRes && desired.scroll === "horizontal"))
+        throw new Error("滚动条资源方向与 scroll 模式冲突");
+    if (patch.clipSoftness && (patch.clipSoftness.x || patch.clipSoftness.y) && (desired.overflow === "visible"
+        || (desired.overflow === "scroll" && (desired.scrollBarFlags & FairyEditor.FScrollPane.MASK_DISABLED))))
+        throw new Error("非零柔化边缘需要 hidden/scroll 裁剪，且不能禁用滚动裁剪");
+    const result = editComponentMetadata(doc, obj, params, () => scrollSettings(obj), !valuesEqual(before, desired), () => {
+        for (const key of ["overflow", "scroll", "scrollBarDisplay", "scrollBarFlags", "pageControllerName", ...SCROLL_RESOURCES])
+            if (patch[key] !== undefined && patch[key] !== before[key])
+                obj[key === "pageControllerName" ? "pageController" : key] = patch[key];
+        if (patch.scrollBarMargin !== undefined)
+            obj.scrollBarMarginStr = marginString(patch.scrollBarMargin);
+        if (patch.clipSoftness !== undefined) {
+            obj.clipSoftnessX = patch.clipSoftness.x;
+            obj.clipSoftnessY = patch.clipSoftness.y;
+        }
+        obj.UpdateOverflow();
+        // header/footer 是原生字段，没有 setter 刷新；显式重建 ScrollPane 外观，避免保存正确但设计态仍显示旧资源。
+        if (obj.scrollPane)
+            obj.scrollPane.OnFlagsChanged(true);
+        if (!valuesEqual(scrollSettings(obj), desired))
+            throw new Error("Editor 未接受全部滚动设置或影响了未修改字段");
     });
+    // 原生非 scroll 模式不序列化显示模式/flags；不能把内存中残留的旧值描述为重载后仍保留。
+    return { ...result, inactiveScrollFields: obj.overflow === "scroll" ? [] : ["scrollBarDisplay", "scrollBarFlags", "pageMode"],
+        note: "保存核对整个当前组件；overflow 非 scroll 时，原生不持久化 scrollBarDisplay/flags/pageMode，重载按默认值。资源和边距独立保留；失败不自动回滚。" };
 }
 function setGroup(params) {
     const doc = getActiveDocument(), obj = editingTarget(params), id = params.groupId;
@@ -5161,6 +5305,7 @@ function getObjects(params) {
     return { documentUrl: doc.content.resourceURL, revision: documentRevision(doc), modified: Boolean(doc.isModified), objects };
 }
 const BATCH_FIELDS = {
+    set_container_settings: ["settings"],
     duplicate_objects: ["targets", "offset", "namingPolicy", "names", "externalReferences", "refs"], reorder_objects: ["orderedIds"],
     create_object: ["objectType", "name", "x", "y", "width", "height", "insertIndex", "groupMemberIds"],
     insert_object: ["url", "name", "x", "y", "insertIndex"],
@@ -5196,6 +5341,8 @@ function batchReference(value, aliases) {
 }
 function batchParams(params, aliases) {
     const value = JSON.parse(JSON.stringify(params));
+    if (value.settings && value.settings.hitTestSourceId !== undefined)
+        value.settings.hitTestSourceId = batchReference(value.settings.hitTestSourceId, aliases);
     if (value.target && value.target.id)
         value.target.id = batchReference(value.target.id, aliases);
     if (Array.isArray(value.targets))
@@ -5242,6 +5389,8 @@ function validateBatch(params, doc) {
         const creates = op.action === "create_object" || op.action === "insert_object";
         if (op.ref !== undefined && (!creates || typeof op.ref !== "string" || !/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(op.ref) || Object.prototype.hasOwnProperty.call(aliases, op.ref)))
             throw new Error(`第 ${index} 项 ref 无效或重复`);
+        if (op.action === "set_container_settings" && value.settings && typeof value.settings.hitTestSourceId === "string" && value.settings.hitTestSourceId.startsWith("$"))
+            batchReference(value.settings.hitTestSourceId, aliases);
         if (op.action === "duplicate_objects") {
             if (!Array.isArray(value.targets) || !value.targets.length || value.targets.length > 200)
                 throw new Error("复制 targets 必须包含 1..200 项");
@@ -5528,7 +5677,7 @@ function handleCommand(request) {
         remove_component_property: true, set_controller_properties: true,
         set_scroll_settings: true, set_group: true, set_group_settings: true, set_input_settings: true, set_mask_settings: true,
         get_group_settings: true, get_input_settings: true, get_mask_settings: true, add_relation: true, remove_relation: true, set_loader: true,
-        duplicate_objects: true, get_child_order: true, reorder_objects: true,
+        duplicate_objects: true, get_child_order: true, reorder_objects: true, get_container_settings: true, set_container_settings: true,
         get_button_settings: true, set_button_settings: true, get_button_state_resources: true, set_button_state_resources: true,
         get_graph_settings: true, set_graph_settings: true, get_image_display: true, set_image_display: true, get_filter_settings: true, set_filter_settings: true,
         set_text_style: true, replace_object_resource: true,
@@ -5633,11 +5782,22 @@ function handleCommand(request) {
             return { target: targetSummary(obj, params.target), settings: listItemResources(obj) };
         }
         case "set_list_item_resources": return setListItemResources(params);
+        case "get_container_settings": {
+            assertKnownKeys(params, [], "params");
+            const doc = getActiveDocument();
+            return { target: targetSummary(doc.content, null), settings: containerSettings(doc.content), viewport: containerViewport(doc.content) };
+        }
+        case "set_container_settings":
+            assertKnownKeys(params, ["settings", "save"], "params");
+            return setContainerSettings(params);
         case "get_scroll_settings": {
+            assertKnownKeys(params, ["target"], "params");
             const obj = scrollTarget(params);
             return { target: targetSummary(obj, params.target), settings: scrollSettings(obj) };
         }
-        case "set_scroll_settings": return setScrollSettings(params);
+        case "set_scroll_settings":
+            assertKnownKeys(params, ["target", "settings", "save"], "params");
+            return setScrollSettings(params);
         case "get_group": {
             const obj = editingTarget(params);
             return { target: targetSummary(obj, params.target), groupId: obj.groupId || "" };

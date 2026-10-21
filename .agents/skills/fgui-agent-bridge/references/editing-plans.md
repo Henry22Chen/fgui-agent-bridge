@@ -32,6 +32,7 @@
 | set_button_settings | target, settings；仅直属按钮实例覆盖，禁止根定义和状态资源编辑 |
 | set_graph_settings / set_image_display / set_filter_settings | target, settings；图形/图片显示/颜色滤镜 |
 | set_mask_settings | settings={maskId?,reversedMask?}；作用于根组件，无 target |
+| set_container_settings | settings={margin?,minWidth?,maxWidth?,minHeight?,maxHeight?,hitTestSourceId?}；当前根，无 target；hitTestSourceId 可用前序 `$ref` |
 | replace_object_resource | target, resourceURL, expectedType?, preserveSize?；图片或组件实例 |
 | set_group | target, groupId |
 | add_relation / remove_relation | target, relationTargetId?, relationType, usePercent?（仅 add） |
@@ -45,6 +46,8 @@
 | remove_object | target；不能删除根 |
 
 先用 dry_run=true 可以预检查结构、作用域和引用，不产生回执或修改。它不能提前模拟所有原生自动布局/Gear 约束。正式执行失败会停止，已经完成的操作保留且不自动保存，不是原子回滚。
+
+`set_scroll_settings` 扩展的 scrollBarMargin、clipSoftness、滚动条/头尾资源也可批量；Python 在入队前校验 scroll_settings_extended 能力标记。根 pageControllerName 不能绑定自身控制器，直属 List 可绑定父文档控制器。完整模式和有名边距规则见[容器与滚动](container-scroll.md)。
 
 正式执行检查 status=succeeded。失败或超时后，使用原 document_url + operation_key 调用 `fgui_get_batch_result`。相同键、相同参数再次提交只返回原回执；修改参数必须换新键。verbose=true 返回逐操作详情，默认只返回状态、计数、别名 ID 和错误。unknown/running 不证明操作未执行；Editor 重启后回执属于旧实例，必须先检查实际文档，不能盲目重试。
 

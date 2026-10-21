@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.16.0`（Git 标签 `v0.16.0`）
+- Bridge 版本：`0.17.0`（Git 标签 `v0.17.0`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：108；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
+- MCP 工具数：110；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -54,7 +54,8 @@
 | `fgui_get_button_binding` / `fgui_set_button_binding` | target；修改 `settings`, save=false | `controllerName`、`pageId`、`selected`；空控制器名清除绑定 |
 | `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | `layout`、`repeatX/repeatY`、`lineGap/columnGap`、`align/vAlign`、`autoResizeItem`、`selectionMode`、`clearOnPublish`（发布清空，不删除编辑器预置项） |
 | `fgui_get_list_item_resources` / `fgui_set_list_item_resources` | target；修改 `settings={defaultItem?,items?}`, save=false | 默认项资源与预置项增删重排、资源/名称/标题/图标/属性覆盖；`sourceIndex` 保留原项，items 完整替换，详见[列表项编辑](list-items.md) |
-| `fgui_get_scroll_settings` / `fgui_set_scroll_settings` | target；修改 `settings`, save=false | 根组件或原生 List：`overflow`、`scroll`、`scrollBarDisplay`、`scrollBarFlags`、`pageMode`、`pageControllerName` |
+| `fgui_get_container_settings` / `fgui_set_container_settings` | 当前根，无 target；修改 settings, save=false | margin、min/max Width/Height、hitTestSourceId；尺寸与视口回读，见[容器与滚动](container-scroll.md) |
+| `fgui_get_scroll_settings` / `fgui_set_scroll_settings` | target；修改 `settings`, save=false | 根或原生 List：原有 overflow/scroll/分页 flags；新增 scrollBarMargin、clipSoftness、hz/vtScrollBarRes、headerRes/footerRes，见[容器与滚动](container-scroll.md) |
 | `fgui_get_group_settings` / `fgui_set_group_settings` | target；修改 settings, save=false | 分组 advanced、布局和主格设置，详见[Editor 设置](editor-settings.md) |
 | `fgui_get_input_settings` / `fgui_set_input_settings` | target；修改 settings, save=false | InputText 的 promptText、maxLength、restrict、password、keyboardType |
 | `fgui_get_mask_settings` / `fgui_set_mask_settings` | 当前根，无 target；修改 settings, save=false | maskId、reversedMask，空 ID 清除；引用必须是直属对象 |
@@ -139,6 +140,7 @@
 
 - 基础：`status`、`ping`、`project`、`packages`、`items`、`open`、`active`、`tree`、`select`、`set`、`insert`、`remove`
 - 对象结构：`duplicate-objects TARGETS_JSON`、`get-child-order`、`reorder-objects ORDERED_IDS_JSON`；复制支持偏移/名称/引用策略和多对象别名，写入支持 `--save`。
+- 根容器：`get-container-settings`、`set-container-settings SETTINGS_JSON --save`，不带 target。扩展滚动沿用 `get/set-scroll-settings --path root` 或直属 List 定位。
 - 资源：`create-component`、`create-button`、`import-image`、`import-font`、`import-sound`、`create-movieclip`、`get-movieclip`、`update-movieclip`、`remove-movieclip`、`get-loader3d`、`set-loader3d`、`fix-spine-anchor`
 - Transition：`transitions`、`get-transition`、`upsert-transition`、`remove-transition`、`add-transition-item`、`update-transition-item`、`remove-transition-item`
 - 计划与交接：`get-objects`、`apply-batch PLAN.json`、`get-batch-result`、`capture-states`、`begin-external-edit`、`finish-external-edit`、`diagnostics`。批量计划字段使用 Bridge camelCase，全局 --timeout 仍在命令前。

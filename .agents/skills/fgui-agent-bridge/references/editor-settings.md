@@ -34,6 +34,8 @@
 
 ## 根组件遮罩
 
+根 margin、尺寸限制、hitTestSourceId 以及扩展滚动设置在 `0.17.0` 开放，见[容器与滚动](container-scroll.md)。命中区域与下述遮罩分别设置。
+
 `fgui_get_mask_settings()` 无对象定位参数，读取当前根组件；`fgui_set_mask_settings(settings, save=false)` 接受：
 
 ```json

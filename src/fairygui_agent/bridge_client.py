@@ -77,6 +77,8 @@ COMPONENT_PROPERTY_CAPABILITIES = frozenset({"get_component_instance", "set_comp
 LIST_ITEM_CAPABILITIES = frozenset({"get_list_item_resources", "set_list_item_resources"})
 EDITOR_SETTING_CAPABILITIES = frozenset({"get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings"})
 STRUCTURE_CAPABILITIES = frozenset({"duplicate_objects", "get_child_order", "reorder_objects"})
+CONTAINER_CAPABILITIES = frozenset({"get_container_settings", "set_container_settings"})
+SCROLL_EXTENDED_FIELDS = frozenset({"scrollBarMargin", "clipSoftness", "hzScrollBarRes", "vtScrollBarRes", "headerRes", "footerRes"})
 BUTTON_CAPABILITIES = frozenset({"get_button_settings", "set_button_settings", "get_button_state_resources", "set_button_state_resources"})
 VISUAL_CAPABILITIES = frozenset({"get_graph_settings", "set_graph_settings", "get_image_display", "set_image_display", "get_filter_settings", "set_filter_settings"})
 
@@ -251,6 +253,18 @@ class BridgeClient:
         requested = {action}
         if action == "apply_batch" and isinstance((params or {}).get("operations"), list):
             requested.update(op.get("action") for op in params["operations"] if isinstance(op, dict) and isinstance(op.get("action"), str))
+        container_required = requested & CONTAINER_CAPABILITIES
+        scroll_operations = (params or {}).get("operations", []) if action == "apply_batch" else [{"action": action, "params": params or {}}]
+        for op in scroll_operations:
+            if not isinstance(op, dict) or op.get("action") != "set_scroll_settings":
+                continue
+            fields = op.get("params", {})
+            settings = fields.get("settings") if isinstance(fields, dict) else None
+            if isinstance(settings, dict) and SCROLL_EXTENDED_FIELDS & settings.keys():
+                container_required = container_required | {"scroll_settings_extended"}
+        missing = container_required - set(status.get("capabilities", []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少容器/扩展滚动能力：{', '.join(sorted(missing))}，请同步并重新加载 0.17.0 或更高版本插件。")
         missing = (requested & STRUCTURE_CAPABILITIES) - set(status.get("capabilities", []))
         if missing:
             raise BridgeError(f"FairyGUI Agent Bridge 缺少对象复制/层级能力：{', '.join(sorted(missing))}，请同步并重新加载 0.16.0 或更高版本插件。")

@@ -1010,14 +1010,35 @@ def fgui_set_list_item_resources(settings: dict[str, Any], object_id: str | None
 
 
 @mcp.tool()
+def fgui_get_container_settings() -> dict[str, Any]:
+    """读取当前根组件的四边 margin、min/max Width/Height 和 hitTestSourceId，另返回当前尺寸与视口。0 表示未设置尺寸限制。"""
+    return _client.call("get_container_settings")
+
+
+@mcp.tool()
+def fgui_set_container_settings(settings: dict[str, Any], save: bool = False) -> dict[str, Any]:
+    """编辑当前根定义：margin={left?,right?,top?,bottom?} 为整数边距，minWidth/maxWidth/minHeight/maxHeight 为非负整数（0 不限制）。
+
+    hitTestSourceId 引用直属 Image/非空 Graph，空串清除；命中区域、mask 与 opaque 独立，不改对象 touchable。
+    省略字段保持，非法 min/max 写前拒绝；默认不保存，save=true 保存整个组件并回读，无完整结构撤销。
+    """
+    return _client.call("set_container_settings", {"settings": settings, "save": save})
+
+
+@mcp.tool()
 def fgui_get_scroll_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
-    """读取当前组件根或原生 List 的滚动、分页和分页控制器设置。"""
+    """读取当前根（object_path='root'）或直属原生 List 的滚动/分页设置；0.17.0 插件还返回 scrollBarMargin、clipSoftness 及横/竖滚动条和 header/footer 资源。"""
     return _editing_call("get_scroll_settings", object_id, object_path, object_name)
 
 
 @mcp.tool()
 def fgui_set_scroll_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
-    """设置 overflow、scroll、scrollBarDisplay、scrollBarFlags、pageMode、pageControllerName；分页位保留其他滚动标志，默认不保存。"""
+    """设置 overflow、scroll、scrollBarDisplay、scrollBarFlags、pageMode、pageControllerName；分页位保留其他滚动标志。
+
+    0.17.0 新增 scrollBarMargin={left?,right?,top?,bottom?}、clipSoftness={x?,y?}（整数），hzScrollBarRes/vtScrollBarRes（ScrollBar 组件 URL）、headerRes/footerRes（组件 URL），空串清除引用。
+    新增非零边距/资源须处于明确 scroll 模式，柔化需要 hidden/scroll 裁剪；不会隐式开启滚动或切换方向。pageControllerName 仅绑定已启用滚动的直属 List 的父控制器。
+    默认不保存；保存核对整个组件。非 scroll 模式原生不持久化 scrollBarDisplay/flags/pageMode，响应 inactiveScrollFields 明确列出。
+    """
     return _editing_call("set_scroll_settings", object_id, object_path, object_name, settings=settings, save=save)
 
 
