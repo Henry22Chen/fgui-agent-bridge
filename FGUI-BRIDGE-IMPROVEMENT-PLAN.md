@@ -1,5 +1,7 @@
 # FGUI Agent Bridge 改进规划
 
+> 历史文档：下文保留旧版本的规划与核查背景。v0.13.0 之后的能力拆分、优先级和验收计划以[版本计划总览](docs/roadmap/README.md)为准，不按本文旧状态重复判断当前缺口。
+
 > 适用范围：`/Users/wilson/fgui-agent-bridge` 及其同步到业务工程的 FairyGUI 插件、MCP、CLI 和 Skill。
 >
 > 编写日期：2026-09-20

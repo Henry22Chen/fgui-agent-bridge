@@ -12,6 +12,8 @@
 
 业务项目可在根目录放置 [FairyGUI Editor 操作规范](FairyGUI-Editor-操作规范.md)，由 `AGENTS.md` 引用，在需要操作 FairyGUI 工程时检查环境、按需加载技能。
 
+后续能力按版本安排，见[版本计划总览](docs/roadmap/README.md)；其中所有版本均为待安排的计划。
+
 ---
 
 ## 🏗️ 工作原理
