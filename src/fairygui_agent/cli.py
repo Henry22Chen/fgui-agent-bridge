@@ -354,8 +354,8 @@ def build_parser() -> argparse.ArgumentParser:
     duplicate.add_argument("--names", help="JSON 源 ID 到新名称")
     duplicate.add_argument("--refs", help="JSON 源 ID 到返回别名")
     duplicate.add_argument("--save", action="store_true")
-    for command in ("get-button-settings", "set-button-settings", "get-button-state-resources", "set-button-state-resources"):
-        p = subparsers.add_parser(command, help="按钮定义/实例设置或当前定义的六态图；省略目标为当前定义")
+    for command in ("get-button-settings", "set-button-settings", "get-button-state-resources", "set-button-state-resources", "get-progress-settings", "set-progress-settings", "get-slider-settings", "set-slider-settings", "get-combo-settings", "set-combo-settings"):
+        p = subparsers.add_parser(command, help="扩展控件定义/实例设置或按钮六态图；省略目标为当前定义")
         if command.endswith("settings"):
             _add_target_arguments(p, required=False)
         if command.startswith("set-"):
@@ -746,7 +746,7 @@ def main() -> int:
                           "externalReferences": args.external_references, "save": args.save}
                 if args.names is not None: params['names'] = load_json_value(args.names)
                 if args.refs is not None: params['refs'] = load_json_value(args.refs)
-        elif args.command in ("get-button-settings", "set-button-settings", "get-button-state-resources", "set-button-state-resources"):
+        elif args.command in ("get-button-settings", "set-button-settings", "get-button-state-resources", "set-button-state-resources", "get-progress-settings", "set-progress-settings", "get-slider-settings", "set-slider-settings", "get-combo-settings", "set-combo-settings"):
             action = args.command.replace("-", "_")
             params = {}
             if args.command.endswith("settings"):

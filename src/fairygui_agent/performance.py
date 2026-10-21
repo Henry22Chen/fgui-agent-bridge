@@ -21,6 +21,7 @@ BATCH_FIELDS = {
     "insert_object": {"url", "name", "x", "y", "insertIndex"},
     "set_properties": {"target", "properties"}, "set_text_style": {"target", "style"},
     "set_button_binding": {"target", "settings"}, "set_button_settings": {"target", "settings"}, "set_list_settings": {"target", "settings"},
+    "set_progress_settings": {"target", "settings"}, "set_slider_settings": {"target", "settings"}, "set_combo_settings": {"target", "settings"},
     "set_list_item_resources": {"target", "settings"},
     "set_group_settings": {"target", "settings"}, "set_input_settings": {"target", "settings"}, "set_mask_settings": {"settings"},
     "set_graph_settings": {"target", "settings"}, "set_image_display": {"target", "settings"}, "set_filter_settings": {"target", "settings"},

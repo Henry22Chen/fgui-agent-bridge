@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.18.0";
+const BRIDGE_VERSION = "0.19.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1419,6 +1419,7 @@ function writeStatus() {
             "list_clear_on_publish", "replace_component_resource",
             "duplicate_objects", "get_child_order", "reorder_objects",
             "get_button_settings", "set_button_settings", "get_button_state_resources", "set_button_state_resources",
+            "get_progress_settings", "set_progress_settings", "get_slider_settings", "set_slider_settings", "get_combo_settings", "set_combo_settings",
             "get_graph_settings", "set_graph_settings", "get_image_display", "set_image_display", "get_filter_settings", "set_filter_settings",
             "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
         ]
@@ -4046,6 +4047,165 @@ function setButtonBinding(params) {
             b.selected = patch.selected;
     });
 }
+const WIDGET_TITLE_TYPES = ["percent", "valueAndmax", "value", "max"];
+const WIDGET_DEFINITION_FIELDS = { progress: ["titleType", "reverse"], slider: ["titleType", "reverse", "wholeNumbers", "changeOnClick"], combo: ["dropdown"] };
+const WIDGET_INSTANCE_FIELDS = { progress: ["min", "max", "value", "sound", "volume"], slider: ["min", "max", "value"],
+    combo: ["items", "title", "icon", "visibleItemCount", "direction", "selectionController", "sound", "volume", "clearOnPublish"] };
+/** 扩展控件定义只写当前根；实例仅写当前父文档支持的覆盖，不修改共享资源。 */
+function widgetTarget(params, kind) {
+    const doc = getActiveDocument(), obj = editingTarget(params, ["component"], true), extension = kind === "progress" ? "progressbar" : kind === "combo" ? "combobox" : "slider";
+    if (!obj.extention || String(obj.extentionId).toLowerCase() !== extension)
+        throw new Error(`目标必须是 ${extension} 组件`);
+    return { doc, obj, b: obj.extention, definition: obj === doc.content, kind };
+}
+function comboItems(b) {
+    const result = [], rows = b.items;
+    if (rows)
+        for (let i = 0; i < rows.Length; i++) {
+            const row = rows.GetValue(i);
+            result.push({ title: String(row.GetValue(0) || ""), value: String(row.GetValue(1) || ""), icon: String(row.GetValue(2) || "") });
+        }
+    return result;
+}
+function widgetSettings(t, definition = t.definition) {
+    const result = {};
+    for (const key of (definition ? WIDGET_DEFINITION_FIELDS : WIDGET_INSTANCE_FIELDS)[t.kind]) {
+        if (key === "items")
+            result.items = comboItems(t.b);
+        else if (["sound", "icon", "title", "selectionController", "dropdown"].indexOf(key) >= 0)
+            result[key] = String(t.b[key] || "");
+        else
+            result[key] = safeValue(t.b[key]);
+    }
+    return result;
+}
+function widgetScope(t) {
+    const definition = t.definition, bound = t.kind === "combo" && Boolean(t.b.selectionController);
+    return { scope: definition ? "definition" : "instance", resourceURL: String(t.obj.resourceURL), sharedImpact: definition,
+        writableFields: (definition ? WIDGET_DEFINITION_FIELDS : WIDGET_INSTANCE_FIELDS)[t.kind].filter(k => definition || !bound || (k !== "title" && k !== "icon")),
+        readOnlySettings: definition ? {} : widgetSettings(t, true),
+        preview: definition ? { instanceValues: widgetSettings(t, false), instanceValuesPersisted: false } : t.kind === "combo" ? { selectedIndexPersisted: false } : {},
+        numericConstraints: t.kind === "combo" ? { volume: "integer 0..100" } : { range: "integer -1000000..1000000", volume: t.kind === "progress" ? "integer 0..100" : null,
+            note: "Editor 6.1.4 的 Slider 内存字段为 Single，但小数 XML 重载会退回默认范围；wholeNumbers=false 也不开放无法重载的小数配置。" },
+        note: "定义只保存共享配置，范围/选项/显示内容在实例保存。ComboBox 绑定选择控制器时显示由其当前索引决定，显式 title/icon 需先或同时解除绑定。selectedIndex 不是独立持久化字段；save=true 保存整个当前组件，无完整撤销。" };
+}
+/** 下拉模板必须是含唯一直属原生 list 的组件；仅检查源文件，不创建或改写被引用资源。 */
+function comboDropdown(value) {
+    const url = buttonResource(value, FairyEditor.FPackageItemType.COMPONENT, "dropdown");
+    if (!url)
+        return "";
+    const item = resolveItem({ url }), xml = new CS.FairyGUI.Utils.XML(String(IOFile.ReadAllText(item.file))), list = xml.GetNode("displayList");
+    const matches = [];
+    if (list)
+        for (let i = 0; i < list.elements.Count; i++) {
+            const node = list.elements.get_Item(i);
+            if (String(node.GetAttribute("name")) === "list")
+                matches.push(String(node.name));
+        }
+    if (matches.length !== 1 || matches[0] !== "list")
+        throw new Error("dropdown 组件必须包含唯一名为 list 的直属原生 List");
+    return url;
+}
+/** 先构造合法完整范围，再按 min/max/value 写入；防止原生 setter 的中间钳制吞掉最终 value。 */
+function setWidgetSettings(params, kind) {
+    const t = widgetTarget(params, kind), { doc, obj, b, definition } = t;
+    const patch = visualPatch(params.settings, (definition ? WIDGET_DEFINITION_FIELDS : WIDGET_INSTANCE_FIELDS)[kind]);
+    for (const key of ["reverse", "wholeNumbers", "changeOnClick", "clearOnPublish"])
+        if (patch[key] !== undefined && typeof patch[key] !== "boolean")
+            throw new Error(`${key} 必须是布尔值`);
+    if (patch.titleType !== undefined)
+        visualEnum(patch.titleType, WIDGET_TITLE_TYPES, "titleType");
+    for (const key of ["min", "max", "value"])
+        if (patch[key] !== undefined) {
+            if (typeof patch[key] !== "number")
+                throw new Error(`${key} 必须是数字`);
+            // Slider 虽可在内存保存 Single、小数也写入 XML，但当前原生 Read 按整数读取并退回默认值，不能宣称小数已可靠保存。
+            if (!Number.isInteger(patch[key]))
+                throw new Error(`${key} 必须为整数；Editor 当前不能可靠重载小数范围，即使 wholeNumbers=false`);
+            patch[key] = numberValue(patch[key], key, -1000000, 1000000);
+        }
+    if (patch.sound !== undefined)
+        patch.sound = buttonResource(patch.sound, FairyEditor.FPackageItemType.SOUND, "sound");
+    if (patch.volume !== undefined) {
+        if (!Number.isInteger(patch.volume))
+            throw new Error("volume 必须是 0..100 的整数百分数");
+        patch.volume = numberValue(patch.volume, "volume", 0, 100);
+    }
+    if (patch.dropdown !== undefined)
+        patch.dropdown = comboDropdown(patch.dropdown);
+    if (patch.icon !== undefined)
+        patch.icon = buttonResource(patch.icon, FairyEditor.FPackageItemType.IMAGE, "icon");
+    if (patch.title !== undefined && typeof patch.title !== "string")
+        throw new Error("title 必须为字符串，空串清除");
+    if (patch.visibleItemCount !== undefined) {
+        patch.visibleItemCount = containerInteger(patch.visibleItemCount, "visibleItemCount");
+        if (patch.visibleItemCount < 1 || patch.visibleItemCount > 10000)
+            throw new Error("visibleItemCount 必须为 1..10000 整数");
+    }
+    if (patch.direction !== undefined)
+        visualEnum(patch.direction, ["auto", "up", "down"], "direction");
+    if (patch.selectionController !== undefined && typeof patch.selectionController !== "string")
+        throw new Error("selectionController 必须为控制器名称或空串");
+    if (patch.items !== undefined) {
+        if (!Array.isArray(patch.items) || patch.items.length > 10000)
+            throw new Error("items 必须为不超过 10000 项的最终有序数组");
+        patch.items = patch.items.map((entry, index) => {
+            assertKnownKeys(entry, ["title", "value", "icon"], `items[${index}]`);
+            if (typeof entry.title !== "string" || typeof entry.value !== "string")
+                throw new Error(`items[${index}] 必须提供字符串 title/value`);
+            return { title: entry.title, value: entry.value, icon: entry.icon === undefined ? "" : buttonResource(entry.icon, FairyEditor.FPackageItemType.IMAGE, `items[${index}].icon`) };
+        });
+    }
+    const before = widgetSettings(t), desired = { ...before, ...patch };
+    let selection = null;
+    if (!definition && kind !== "combo") {
+        if (!(desired.min < desired.max) || desired.value < desired.min || desired.value > desired.max)
+            throw new Error("范围必须满足 min < max 且 min <= value <= max；需要同时提交完整有效补丁");
+        if (kind === "slider" && b.wholeNumbers && [desired.min, desired.max, desired.value].some(v => !Number.isInteger(v)))
+            throw new Error("wholeNumbers 已启用，min/max/value 均须为整数");
+    }
+    if (!definition && kind === "combo" && desired.selectionController) {
+        selection = resolveController(doc, desired.selectionController);
+        if (patch.title !== undefined || patch.icon !== undefined)
+            throw new Error("选择控制器绑定时 title/icon 由控制器决定；请先或同时解除绑定");
+        const index = Number(selection.selectedIndex);
+        if (!Number.isInteger(index) || index < 0 || index >= desired.items.length)
+            throw new Error("选择控制器当前索引必须对应最终选项；清空选项需先或同时解除绑定");
+        desired.title = desired.items[index].title;
+        desired.icon = desired.items[index].icon;
+    }
+    const nativeDefinition = definition ? null : gearXmlData(b.Write_editMode());
+    const result = editComponentMetadata(doc, obj, params, () => widgetSettings(t), !valuesEqual(before, desired), () => {
+        if (patch.items !== undefined) {
+            // 原生列序为 title/value/icon；协议使用有名字段，避免调用方把值和图标串列。
+            const rows = CS.System.Array.CreateInstance(puerts.$typeof(CS.System.String).MakeArrayType(), desired.items.length);
+            for (let i = 0; i < desired.items.length; i++) {
+                const row = desired.items[i];
+                rows.SetValue(toCsStringArray([row.title, row.value, row.icon]), i);
+            }
+            b.items = rows;
+        }
+        for (const key of ["min", "max", "value"])
+            if (desired[key] !== undefined)
+                b[key] = desired[key];
+        for (const key of Object.keys(patch))
+            if (["min", "max", "value", "items", "title", "icon"].indexOf(key) < 0)
+                b[key] = patch[key];
+        if (kind === "combo" && !definition) {
+            if (selection)
+                b.selectedIndex = Number(selection.selectedIndex);
+            else {
+                b.title = desired.title;
+                b.icon = desired.icon;
+            }
+        }
+        if (kind !== "combo")
+            b.Update();
+        if (!valuesEqual(widgetSettings(t), desired) || (!definition && !valuesEqual(nativeDefinition, gearXmlData(b.Write_editMode()))))
+            throw new Error("Editor 未接受全部控件设置，或意外改变共享定义");
+    });
+    return { ...result, ...widgetScope(t) };
+}
 const BUTTON_STATES = ["up", "down", "over", "selectedOver", "disabled", "selectedDisabled"];
 const BUTTON_DEFINITION_FIELDS = ["mode", "titleColor", "titleFontSize", "sound", "volume", "downEffect", "downEffectValue"];
 const BUTTON_INSTANCE_FIELDS = ["title", "selectedTitle", "icon", "selectedIcon", "titleColor", "titleFontSize", "sound", "volume"];
@@ -5384,7 +5544,8 @@ const BATCH_FIELDS = {
     create_object: ["objectType", "name", "x", "y", "width", "height", "insertIndex", "groupMemberIds"],
     insert_object: ["url", "name", "x", "y", "insertIndex"],
     set_properties: ["target", "properties"], set_text_style: ["target", "style"],
-    set_button_binding: ["target", "settings"], set_button_settings: ["target", "settings"], set_list_settings: ["target", "settings"],
+    set_button_binding: ["target", "settings"], set_button_settings: ["target", "settings"],
+    set_progress_settings: ["target", "settings"], set_slider_settings: ["target", "settings"], set_combo_settings: ["target", "settings"], set_list_settings: ["target", "settings"],
     set_list_item_resources: ["target", "settings"],
     set_group_settings: ["target", "settings"], set_input_settings: ["target", "settings"], set_mask_settings: ["settings"],
     set_graph_settings: ["target", "settings"], set_image_display: ["target", "settings"], set_filter_settings: ["target", "settings"],
@@ -5753,6 +5914,7 @@ function handleCommand(request) {
         get_group_settings: true, get_input_settings: true, get_mask_settings: true, add_relation: true, remove_relation: true, set_loader: true,
         duplicate_objects: true, get_child_order: true, reorder_objects: true, get_container_settings: true, set_container_settings: true,
         get_button_settings: true, set_button_settings: true, get_button_state_resources: true, set_button_state_resources: true,
+        get_progress_settings: true, set_progress_settings: true, get_slider_settings: true, set_slider_settings: true, get_combo_settings: true, set_combo_settings: true,
         get_graph_settings: true, set_graph_settings: true, get_image_display: true, set_image_display: true, get_filter_settings: true, set_filter_settings: true,
         set_text_style: true, replace_object_resource: true,
         set_gear: true,
@@ -5810,6 +5972,30 @@ function handleCommand(request) {
         case "finish_external_edit": return finishExternalEdit(params);
         case "get_image_settings": return { settings: imageSettings(resolveItem(params)), scope: "package" };
         case "set_image_settings": return setImageSettings(params);
+        case "get_progress_settings": {
+            assertKnownKeys(params, ["target"], "params");
+            const t = widgetTarget(params, "progress");
+            return { target: targetSummary(t.obj, params.target), settings: widgetSettings(t), ...widgetScope(t) };
+        }
+        case "set_progress_settings":
+            assertKnownKeys(params, ["target", "settings", "save"], "params");
+            return setWidgetSettings(params, "progress");
+        case "get_slider_settings": {
+            assertKnownKeys(params, ["target"], "params");
+            const t = widgetTarget(params, "slider");
+            return { target: targetSummary(t.obj, params.target), settings: widgetSettings(t), ...widgetScope(t) };
+        }
+        case "set_slider_settings":
+            assertKnownKeys(params, ["target", "settings", "save"], "params");
+            return setWidgetSettings(params, "slider");
+        case "get_combo_settings": {
+            assertKnownKeys(params, ["target"], "params");
+            const t = widgetTarget(params, "combo");
+            return { target: targetSummary(t.obj, params.target), settings: widgetSettings(t), ...widgetScope(t) };
+        }
+        case "set_combo_settings":
+            assertKnownKeys(params, ["target", "settings", "save"], "params");
+            return setWidgetSettings(params, "combo");
         case "get_button_settings": {
             assertKnownKeys(params, ["target"], "params");
             const t = buttonTarget(params);

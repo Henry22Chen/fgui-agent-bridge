@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.18.0`（Git 标签 `v0.18.0`）
+- Bridge 版本：`0.19.0`（Git 标签 `v0.19.0`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：110；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
+- MCP 工具数：116；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -51,6 +51,9 @@
 | `fgui_get_image_settings` / `fgui_set_image_settings` | 图片 url 或包/资源定位；修改 `settings`, save=false | 包级缩放/九宫格：`scaleMode=none/9grid/tile`、`scale9Grid={x,y,width,height}`、`gridTile=0..31` |
 | `fgui_get_button_settings` / `fgui_set_button_settings` | 可选直属 target；省略为当前按钮定义；settings, save=false | 定义 mode/音效/按压与实例内容/样式覆盖；详见[按钮编辑](button-settings.md) |
 | `fgui_get_button_state_resources` / `fgui_set_button_state_resources` | 当前按钮定义；六态 settings 补丁, save=false | 解析稳定 pageId 与显示/Icon Gear，明确清空；复杂结构拒绝 |
+| `fgui_get_progress_settings` / `fgui_set_progress_settings` | 可选 target；省略为当前定义；settings, save=false | 定义标题/反向，实例范围/声音；见[控件设置](widget-settings.md) |
+| `fgui_get_slider_settings` / `fgui_set_slider_settings` | 可选 target；settings, save=false | 定义标题/反向/整数/点击配置，实例范围 |
+| `fgui_get_combo_settings` / `fgui_set_combo_settings` | 可选 target；settings, save=false | 定义下拉模板，实例选项/显示/控制器/发布清空 |
 | `fgui_get_button_binding` / `fgui_set_button_binding` | target；修改 `settings`, save=false | `controllerName`、`pageId`、`selected`；空控制器名清除绑定 |
 | `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | 既有布局/选择/发布清空；新增 selectionController、foldInvisibleItems、scrollItemToViewOnClick、treeViewEnabled、indent、clickToExpand，详见[列表与树编辑](list-items.md) |
 | `fgui_get_list_item_resources` / `fgui_set_list_item_resources` | target；修改 `settings={defaultItem?,items?}`, save=false | 默认项/预置项增删重排与覆盖；sourceIndex 保留原项，items.level 支持树前序层级，getter 的 tree.nodes 解释父子/文件夹，详见[列表与树编辑](list-items.md) |

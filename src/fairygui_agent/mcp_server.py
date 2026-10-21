@@ -867,6 +867,48 @@ def fgui_set_image_settings(settings: dict[str, Any], url: str | None = None, pa
     return _client.call("set_image_settings", {**_resource_target(url, package_name, item_name, item_path), "settings": settings, "save": save})
 
 
+def _widget_call(action: str, object_id: str | None, object_path: str | None, object_name: str | None, **params: Any) -> dict[str, Any]:
+    """控件省略定位时指向当前定义，显式定位仅允许父文档直属实例。"""
+    target = _target(object_id, object_path, object_name) if any(v is not None for v in (object_id, object_path, object_name)) else {"path": "root"}
+    return _client.call(action, {"target": target, **params})
+
+
+@mcp.tool()
+def fgui_get_progress_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取 ProgressBar 的 scope、可写设置、只读共享定义及不持久化的定义预览值。"""
+    return _widget_call("get_progress_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_progress_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """当前定义只写 titleType(percent/valueAndmax/value/max)、reverse；直属实例写 min/max/value(整数)、sound(声音 ui://，空串清除)、volume(Editor整数百分数0..100)。整体范围须 min < max 且 value 在范围内；省略保持，默认不保存，save=true 保存整个当前组件，不修改共享定义。"""
+    return _widget_call("set_progress_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_slider_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取 Slider 的 scope、范围和只读共享设置；定义预览范围不是持久化默认值。"""
+    return _widget_call("get_slider_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_slider_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """当前定义写 titleType(percent/valueAndmax/value/max)、reverse、wholeNumbers、changeOnClick；直属实例仅写整数 min/max/value（当前 Editor 小数配置不能可靠重载）。范围须 min < max 且 value 在范围内；wholeNumbers 决定交互取整，不解除本接口的整数持久化限制。默认不保存，save=true 保存整个当前组件，无完整事务回滚。"""
+    return _widget_call("set_slider_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_combo_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取 ComboBox 的定义/实例作用域、可写字段、有名选项 title/value/icon、只读下拉引用和当前显示。"""
+    return _widget_call("get_combo_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_combo_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """当前定义只写 dropdown(含唯一直属 list 的组件 ui://，空串清除)；直属实例写 items 最终有序清单、title/icon、visibleItemCount(1..10000)、direction(auto/up/down)、selectionController、sound/volume(整数百分数0..100)、clearOnPublish。每项必须含字符串 title/value，icon 可省略或空串；items=[] 清空。绑定选择控制器时按当前索引显示最终选项，title/icon 不可显式写，清空需同时解除绑定；selectedIndex 不支持独立保存。默认不保存，save=true 保存整个当前组件。"""
+    return _widget_call("set_combo_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
 @mcp.tool()
 def fgui_get_button_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
     """读取按钮设置、scope、writableFields 和覆盖标记。省略目标读取当前按钮定义；指定目标仅支持直属 Button 实例。"""

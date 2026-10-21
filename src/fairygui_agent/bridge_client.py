@@ -80,6 +80,7 @@ STRUCTURE_CAPABILITIES = frozenset({"duplicate_objects", "get_child_order", "reo
 CONTAINER_CAPABILITIES = frozenset({"get_container_settings", "set_container_settings"})
 SCROLL_EXTENDED_FIELDS = frozenset({"scrollBarMargin", "clipSoftness", "hzScrollBarRes", "vtScrollBarRes", "headerRes", "footerRes"})
 LIST_ADVANCED_FIELDS = frozenset({"selectionController", "foldInvisibleItems", "scrollItemToViewOnClick", "treeViewEnabled", "indent", "clickToExpand"})
+WIDGET_CAPABILITIES = frozenset({"get_progress_settings", "set_progress_settings", "get_slider_settings", "set_slider_settings", "get_combo_settings", "set_combo_settings"})
 BUTTON_CAPABILITIES = frozenset({"get_button_settings", "set_button_settings", "get_button_state_resources", "set_button_state_resources"})
 VISUAL_CAPABILITIES = frozenset({"get_graph_settings", "set_graph_settings", "get_image_display", "set_image_display", "get_filter_settings", "set_filter_settings"})
 
@@ -284,6 +285,9 @@ class BridgeClient:
         missing = (requested & STRUCTURE_CAPABILITIES) - set(status.get("capabilities", []))
         if missing:
             raise BridgeError(f"FairyGUI Agent Bridge 缺少对象复制/层级能力：{', '.join(sorted(missing))}，请同步并重新加载 0.16.0 或更高版本插件。")
+        missing = (requested & WIDGET_CAPABILITIES) - set(status.get("capabilities", []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少控件编辑能力：{', '.join(sorted(missing))}，请同步并重新加载 0.19.0 或更高版本插件。")
         missing = (requested & BUTTON_CAPABILITIES) - set(status.get("capabilities", []))
         if missing:
             raise BridgeError(f"FairyGUI Agent Bridge 缺少按钮编辑能力：{', '.join(sorted(missing))}，请同步并重新加载 0.15.0 或更高版本插件。")

@@ -30,6 +30,7 @@
 | set_properties / set_text_style | target, properties / style |
 | set_button_binding / set_list_settings / set_scroll_settings / set_loader / set_group_settings / set_input_settings | target, settings |
 | set_list_item_resources | target, settings={defaultItem?,items?}；sourceIndex 基于调用前清单，树 level 为0起始前序，详见[列表与树](list-items.md) |
+| set_progress_settings / set_slider_settings / set_combo_settings | target, settings；仅直属实例，当前根共享定义不能进入批量，详见[控件设置](widget-settings.md) |
 | set_button_settings | target, settings；仅直属按钮实例覆盖，禁止根定义和状态资源编辑 |
 | set_graph_settings / set_image_display / set_filter_settings | target, settings；图形/图片显示/颜色滤镜 |
 | set_mask_settings | settings={maskId?,reversedMask?}；作用于根组件，无 target |
