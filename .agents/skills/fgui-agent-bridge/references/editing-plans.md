@@ -27,6 +27,7 @@
 | insert_object | url, name?, x?, y?, insertIndex?；仅已有 Image/Component，不触发复杂资源修复 |
 | set_properties / set_text_style | target, properties / style |
 | set_button_binding / set_list_settings / set_scroll_settings / set_loader / set_group_settings / set_input_settings | target, settings |
+| set_graph_settings / set_image_display / set_filter_settings | target, settings；图形/图片显示/颜色滤镜 |
 | set_mask_settings | settings={maskId?,reversedMask?}；作用于根组件，无 target |
 | replace_object_resource | target, resourceURL, expectedType?, preserveSize?；图片或组件实例 |
 | set_group | target, groupId |

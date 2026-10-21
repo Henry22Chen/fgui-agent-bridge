@@ -341,7 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--insert-index", type=int)
     native.add_argument("--group-member-ids", help="JSON 对象 ID 数组；保存分组时必填")
     native.add_argument("--save", action="store_true")
-    for command in ("set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-group-settings", "set-group-settings", "get-input-settings", "set-input-settings", "get-mask-settings", "set-mask-settings", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
+    for command in ("set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-graph-settings", "set-graph-settings", "get-image-display", "set-image-display", "get-filter-settings", "set-filter-settings", "get-group-settings", "set-group-settings", "get-input-settings", "set-input-settings", "get-mask-settings", "set-mask-settings", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
         p = subparsers.add_parser(command, help="读取/编辑当前文档直属对象，默认不保存")
         if command not in ("get-mask-settings", "set-mask-settings"):
             _add_target_arguments(p)
@@ -715,7 +715,7 @@ def main() -> int:
         elif args.command == "get-text-style":
             action = "get_text_style"
             params = {"target": target_from_args(args)}
-        elif args.command in ("get-image-settings", "set-image-settings", "create-object", "set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-group-settings", "set-group-settings", "get-input-settings", "set-input-settings", "get-mask-settings", "set-mask-settings", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
+        elif args.command in ("get-image-settings", "set-image-settings", "create-object", "set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-graph-settings", "set-graph-settings", "get-image-display", "set-image-display", "get-filter-settings", "set-filter-settings", "get-group-settings", "set-group-settings", "get-input-settings", "set-input-settings", "get-mask-settings", "set-mask-settings", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
             action = args.command.replace("-", "_")
             if args.command == "create-object":
                 params = {"objectType": args.object_type, "x": args.x, "y": args.y, "width": args.width, "height": args.height, "save": args.save}

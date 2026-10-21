@@ -1,0 +1,19 @@
+<component size="680,400">
+  <displayList>
+    <image id="mask_sample" name="mask_sample" src="pattern" fileName="Pattern.png" xy="24,48" size="160,112" visible="false"/>
+    <text id="label1" name="label1" xy="24,12" size="160,24" fontSize="16" autoSize="none" text="Rounded rectangle"/>
+    <text id="label2" name="label2" xy="240,12" size="160,24" fontSize="16" autoSize="none" text="Image flip / fill"/>
+    <text id="label3" name="label3" xy="456,12" size="190,24" fontSize="16" autoSize="none" text="Same source / filter"/>
+    <graph id="shape" name="shape" xy="24,48" size="160,112" type="rect"/>
+    <image id="picture" name="picture" src="pattern" fileName="Pattern.png" xy="240,48" size="160,112"/>
+    <image id="reference" name="reference" src="pattern" fileName="Pattern.png" xy="456,48" size="160,112"/>
+    <text id="label4" name="label4" xy="24,192" size="160,24" fontSize="16" autoSize="none" text="Local polygon"/>
+    <text id="label5" name="label5" xy="240,192" size="160,24" fontSize="16" autoSize="none" text="Regular polygon"/>
+    <text id="label6" name="label6" xy="456,192" size="160,24" fontSize="16" autoSize="none" text="Ellipse"/>
+    <graph id="polygon" name="polygon" xy="24,232" size="160,112" type="polygon" points="0,112,80,0,160,112"/>
+    <graph id="regular" name="regular" xy="240,232" size="160,112" type="regular_polygon" sides="5"/>
+    <graph id="ellipse" name="ellipse" xy="456,232" size="160,112" type="ellipse"/>
+    <component id="tile1" name="tile1" src="tile" fileName="Tile.xml" xy="24,360"/>
+    <component id="tile2" name="tile2" src="tile" fileName="Tile.xml" xy="96,360"/>
+  </displayList>
+</component>

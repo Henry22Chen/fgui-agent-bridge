@@ -76,6 +76,7 @@ COMPONENT_PROPERTY_CAPABILITIES = frozenset({"get_component_instance", "set_comp
     "get_component_properties", "upsert_component_property", "remove_component_property", "set_controller_properties"})
 LIST_ITEM_CAPABILITIES = frozenset({"get_list_item_resources", "set_list_item_resources"})
 EDITOR_SETTING_CAPABILITIES = frozenset({"get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings"})
+VISUAL_CAPABILITIES = frozenset({"get_graph_settings", "set_graph_settings", "get_image_display", "set_image_display", "get_filter_settings", "set_filter_settings"})
 
 
 class BridgeError(RuntimeError):
@@ -248,6 +249,9 @@ class BridgeClient:
         requested = {action}
         if action == "apply_batch" and isinstance((params or {}).get("operations"), list):
             requested.update(op.get("action") for op in params["operations"] if isinstance(op, dict) and isinstance(op.get("action"), str))
+        missing = (requested & VISUAL_CAPABILITIES) - set(status.get("capabilities", []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少外观编辑能力：{', '.join(sorted(missing))}，请同步并重新加载 0.14.0 或更高版本插件。")
         required_settings = requested & EDITOR_SETTING_CAPABILITIES
         # 同名旧接口不会声明新增字段的语义，必须用能力标记校验，批量也不能绕过。
         operations = [{"action": action, "params": params or {}}]

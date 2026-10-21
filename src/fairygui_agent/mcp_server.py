@@ -836,6 +836,56 @@ def fgui_set_image_settings(settings: dict[str, Any], url: str | None = None, pa
 
 
 @mcp.tool()
+def fgui_get_graph_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取直属 Graph 的类型、填充/线条及当前类型使用的几何参数；不返回非活动类型的缓存。"""
+    return _editing_call("get_graph_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_graph_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置直属 Graph。type=empty/rect/ellipse/polygon/regular_polygon；fillColor/lineColor 为 RGB/RGBA，lineSize 非负。
+
+    rect 的 cornerRadius=[左上,右上,左下,右下]，全0清除；polygon 的 points=[{x,y},...] 为3..1024个局部坐标，切入多边形必须提供。
+    regular_polygon 的 sides=3..256、startAngle=-360..360、distances 为各顶点非负半径倍率，长度等于边数；改变边数时保留旧倍率公共前缀，新顶点为1。
+    非当前类型的几何字段拒绝；省略保持，默认不保存；save=true 保存整个组件并核对 XML，无完整 Agent 撤销。
+    """
+    return _editing_call("set_graph_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_image_display(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取直属 Image 的染色、翻转和当前启用的填充参数；包级九宫格另用 get_image_settings。"""
+    return _editing_call("get_image_display", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_image_display(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置 Image 的 color、alpha(0..1)、flip(none/hz/vt/both)、fillMethod(none/hz/vt/radial90/radial180/radial360)。
+    RGB color 保留 alpha；RGBA 的 A 写入对象 alpha，两者不能同时提供；alpha 按原生 XML 规范化为三位小数，读取返回 RGB color 和独立 alpha。
+
+    fillAmount 使用 Editor 百分数0..100；fillOrigin 在线性填充为0..1、径向为0..3；fillClockwise 仅径向填充可写。
+    关闭填充时不能同时提供填充参数，切换方式需保证原点有效。只改显示实例，不改图片资源/九宫格；默认不保存。
+    """
+    return _editing_call("set_image_display", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
+def fgui_get_filter_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取直属显示对象颜色滤镜；仅 type=color 返回参数，其他类型只读类型标识。逻辑 Group 不支持。"""
+    return _editing_call("get_filter_settings", object_id, object_path, object_name)
+
+
+@mcp.tool()
+def fgui_set_filter_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """设置直属显示对象颜色滤镜：type=color，brightness/contrast/saturation/hue 均为-1..1，0有效。
+
+    已有 color 滤镜可只改部分参数；从其他类型启用必须显式 type=color，未提供参数用0。{type:none} 明确清除，不能混传颜色参数。
+    不修改 blendMode、不改共享定义；不支持根/逻辑 Group。默认不保存，无完整 Agent 撤销；保存核对当前组件 XML。
+    """
+    return _editing_call("set_filter_settings", object_id, object_path, object_name, settings=settings, save=save)
+
+
+@mcp.tool()
 def fgui_create_object(object_type: str, name: str | None = None, x: float = 0, y: float = 0, width: float = 100, height: float = 30, insert_index: int | None = None, group_member_ids: list[str] | None = None, save: bool = False) -> dict[str, Any]:
     """在当前文档创建 text/richtext/inputtext/loader/list/group/graph。分组边界由成员决定，save=true 的 group 必须提供 group_member_ids；默认不保存，无完整 Agent 结构撤销。"""
     params: dict[str, Any] = {"objectType": object_type, "x": x, "y": y, "width": width, "height": height, "save": save}

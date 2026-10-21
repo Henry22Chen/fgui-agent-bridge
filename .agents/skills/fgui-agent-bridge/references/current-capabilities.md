@@ -1,15 +1,15 @@
 # Agent Bridge 当前能力参考
 
-> 这是独立 `fgui-agent-bridge` 仓库在 2026-10-20 的能力快照。功能变动时必须同步本文件，并以源码实际签名为最终依据。
+> 这是独立 `fgui-agent-bridge` 仓库在 2026-10-21 的能力快照。功能变动时必须同步本文件，并以源码实际签名为最终依据。
 
 ## 版本与通道
 
-- Bridge 版本：`0.13.0`（Git 标签 `v0.13.0`）
+- Bridge 版本：`0.14.0`（Git 标签 `v0.14.0`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：95；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
+- MCP 工具数：101；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -43,6 +43,9 @@
 | `fgui_get_text_style` / `fgui_set_text_style` | target、style、save? | 读取或设置文本对象样式并回读 |
 | `fgui_create_object` | `object_type`, name?, x/y/width/height?, insert_index?, group_member_ids?, save=false | 创建 text/richtext/inputtext/loader/list/group/graph；保存 group 必须指定成员 |
 | `fgui_set_properties` | target、`properties`、save=false | 一次预检和批量写入白名单属性；尺寸忽略 Pivot 位移，坐标最后应用 |
+| `fgui_get_graph_settings` / `fgui_set_graph_settings` | target；修改 settings, save=false | 图形类型、填充/线条、圆角、多边形与半径倍率；详见[外观编辑](visual-settings.md) |
+| `fgui_get_image_display` / `fgui_set_image_display` | target；修改 settings, save=false | Image 染色、翻转、填充；比例为0..100，与包级九宫格分开 |
+| `fgui_get_filter_settings` / `fgui_set_filter_settings` | target；修改 settings, save=false | 直属显示对象颜色滤镜参数-1..1，type=none清除，不修改blendMode |
 | `fgui_get_image_settings` / `fgui_set_image_settings` | 图片 url 或包/资源定位；修改 `settings`, save=false | 包级缩放/九宫格：`scaleMode=none/9grid/tile`、`scale9Grid={x,y,width,height}`、`gridTile=0..31` |
 | `fgui_get_button_binding` / `fgui_set_button_binding` | target；修改 `settings`, save=false | `controllerName`、`pageId`、`selected`；空控制器名清除绑定 |
 | `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | `layout`、`repeatX/repeatY`、`lineGap/columnGap`、`align/vAlign`、`autoResizeItem`、`selectionMode`、`clearOnPublish`（发布清空，不删除编辑器预置项） |

@@ -11,7 +11,7 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.13.0";
+const BRIDGE_VERSION = "0.14.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1256,6 +1256,7 @@ function writeStatus(): void {
             "get_list_settings", "set_list_settings", "get_list_item_resources", "set_list_item_resources", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
             "get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings",
             "list_clear_on_publish", "replace_component_resource",
+            "get_graph_settings", "set_graph_settings", "get_image_display", "set_image_display", "get_filter_settings", "set_filter_settings",
             "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
         ]
     };
@@ -3975,6 +3976,211 @@ function setButtonBinding(params: any): any {
     });
 }
 
+const GRAPH_TYPES = ["empty", "rect", "ellipse", "polygon", "regular_polygon"];
+const IMAGE_FILL_METHODS = ["none", "hz", "vt", "radial90", "radial180", "radial360"];
+const FILTER_FIELDS = ["brightness", "contrast", "saturation", "hue"];
+
+/** 外观设置拒绝隐式数字转换；向量/数组按宿主 Single 精度规范化后再比较，避免合法小数被误判为写入失败。 */
+function visualNumber(value: any, label: string, minimum: number = -1000000, maximum: number = 1000000): number {
+    if (typeof value !== "number") throw new Error(`${label} 必须是数字`);
+    return Math.fround(numberValue(value, label, minimum, maximum));
+}
+
+function visualPatch(value: any, allowed: string[]): any {
+    if (!value || typeof value !== "object" || Array.isArray(value) || !Object.keys(value).length) throw new Error("settings 必须是非空对象");
+    assertKnownKeys(value, allowed, "settings");
+    return { ...value };
+}
+
+function visualEnum(value: any, allowed: string[], label: string): string {
+    if (typeof value !== "string" || allowed.indexOf(value) < 0) throw new Error(`${label} 只能为 ${allowed.join(", ")}`);
+    return value;
+}
+
+function visualColor(value: any, label: string): string {
+    if (typeof value !== "string") throw new Error(`${label} 必须是颜色字符串`);
+    const color = normalizedColor(value, label);
+    // 宿主将不透明 RGBA 写成 RGB；两种等价输入必须使用同一个比较值。
+    return color.length === 9 && color.endsWith("FF") ? color.substring(0, 7) : color;
+}
+
+function nativeNumbers(list: any): number[] {
+    const result: number[] = [];
+    for (let i = 0; i < list.Count; i++) result.push(Number(list.get_Item(i)));
+    return result;
+}
+
+function graphPoints(obj: any): any[] {
+    const result: any[] = [], points = obj.polygonPoints;
+    for (let i = 0; i < points.Count; i++) {
+        const p = points.get_Item(i);
+        result.push({ x: Number(p.x), y: Number(p.y) });
+    }
+    return result;
+}
+
+function graphSettings(obj: any): any {
+    const type = String(obj.type), result: any = { type };
+    if (type === "empty") return result;
+    Object.assign(result, { fillColor: colorHex(obj.fillColor), lineColor: colorHex(obj.lineColor), lineSize: Number(obj.lineSize) });
+    // 只返回当前图形实际使用的几何字段，避免把原生缓存的非活动字段当作可持久化设置。
+    if (type === "rect") {
+        const corner = String(obj.cornerRadius || "");
+        result.cornerRadius = corner ? corner.split(",").map(v => Math.fround(Number(v))) : [0, 0, 0, 0];
+    } else if (type === "polygon") result.points = graphPoints(obj);
+    else if (type === "regular_polygon") Object.assign(result, { sides: Number(obj.sides), startAngle: Number(obj.startAngle), distances: nativeNumbers(obj.verticesDistance) });
+    return result;
+}
+
+function checkedGraphPoints(value: any): any[] {
+    if (!Array.isArray(value) || value.length < 3 || value.length > 1024) throw new Error("points 必须包含 3..1024 个局部坐标顶点");
+    const points = value.map((p, i) => {
+        if (!p || typeof p !== "object" || Array.isArray(p) || Object.keys(p).length !== 2) throw new Error(`points[${i}] 需要 x/y`);
+        assertKnownKeys(p, ["x", "y"], `points[${i}]`);
+        return { x: visualNumber(p.x, `points[${i}].x`), y: visualNumber(p.y, `points[${i}].y`) };
+    });
+    let area = 0;
+    for (let i = 0; i < points.length; i++) {
+        const a = points[i], b = points[(i + 1) % points.length];
+        if (a.x === b.x && a.y === b.y) throw new Error("多边形不能有相邻重复顶点（末尾不必重复首点）");
+        area += a.x * b.y - b.x * a.y;
+    }
+    if (Math.abs(area) < 0.000001) throw new Error("多边形面积不能为零或退化为直线");
+    // 原生三角化不能可靠处理自交轮廓；在切换类型或清空旧顶点前拒绝相交的非相邻边。
+    const cross = (a: any, b: any, c: any) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    const within = (a: any, b: any, p: any) => p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) && p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
+    for (let i = 0; i < points.length; i++) for (let j = i + 1; j < points.length; j++) {
+        if (j === i + 1 || (i === 0 && j === points.length - 1)) continue;
+        const a = points[i], b = points[(i + 1) % points.length], c = points[j], d = points[(j + 1) % points.length];
+        const abC = cross(a, b, c), abD = cross(a, b, d), cdA = cross(c, d, a), cdB = cross(c, d, b);
+        if ((abC * abD < 0 && cdA * cdB < 0) || (abC === 0 && within(a, b, c)) || (abD === 0 && within(a, b, d))
+            || (cdA === 0 && within(c, d, a)) || (cdB === 0 && within(c, d, b))) throw new Error("多边形不能自交或有非相邻的重合顶点/边");
+    }
+    return points;
+}
+
+/** 使用原生图形属性及 UpdateGraph；更换类型前完成整份补丁预检，不写共享资源或源 XML。 */
+function setGraphSettings(params: any): any {
+    const doc = getActiveDocument(), obj = editingTarget(params, ["graph"]);
+    const patch = visualPatch(params.settings, ["type", "fillColor", "lineColor", "lineSize", "cornerRadius", "points", "sides", "startAngle", "distances"]);
+    const type = patch.type === undefined ? String(obj.type) : visualEnum(patch.type, GRAPH_TYPES, "type");
+    visualEnum(type, GRAPH_TYPES, "当前图形类型");
+    const allowed = ["type"].concat(type === "empty" ? [] : ["fillColor", "lineColor", "lineSize"], type === "rect" ? ["cornerRadius"]
+        : type === "polygon" ? ["points"] : type === "regular_polygon" ? ["sides", "startAngle", "distances"] : []);
+    assertKnownKeys(patch, allowed, `${type} 图形 settings`);
+    for (const key of ["fillColor", "lineColor"]) if (patch[key] !== undefined) patch[key] = visualColor(patch[key], key);
+    if (patch.lineSize !== undefined) patch.lineSize = visualNumber(patch.lineSize, "lineSize", 0);
+    if (patch.cornerRadius !== undefined) {
+        if (!Array.isArray(patch.cornerRadius) || patch.cornerRadius.length !== 4) throw new Error("cornerRadius 必须为四项数组：左上、右上、左下、右下；全 0 清除");
+        patch.cornerRadius = patch.cornerRadius.map((v, i) => visualNumber(v, `cornerRadius[${i}]`, 0));
+    }
+    if (patch.points !== undefined) patch.points = checkedGraphPoints(patch.points);
+    if (type === "polygon" && String(obj.type) !== type && patch.points === undefined) throw new Error("切换为 polygon 时必须提供 points");
+    if (patch.sides !== undefined) {
+        if (!Number.isInteger(patch.sides) || patch.sides < 3 || patch.sides > 256) throw new Error("sides 必须为 3..256 的整数");
+    }
+    if (patch.startAngle !== undefined) patch.startAngle = visualNumber(patch.startAngle, "startAngle", -360, 360);
+    if (type === "regular_polygon") {
+        const sides = patch.sides === undefined ? Number(obj.sides) : patch.sides;
+        if (patch.distances !== undefined) {
+            if (!Array.isArray(patch.distances) || patch.distances.length !== sides) throw new Error("distances 长度必须与最终 sides 一致");
+            patch.distances = patch.distances.map((v, i) => visualNumber(v, `distances[${i}]`, 0));
+        } else if (patch.sides !== undefined || String(obj.type) !== type) {
+            // 改变边数时保留已有半径倍率的公共前缀，新顶点使用原生常规半径倍率 1。
+            const old = String(obj.type) === type ? nativeNumbers(obj.verticesDistance) : [];
+            patch.distances = Array.from({ length: sides }, (_, i) => i < old.length ? old[i] : 1);
+        }
+    }
+    return editObjectSettings(doc, obj, params, () => graphSettings(obj), patch, () => {
+        if (patch.type !== undefined) obj.type = patch.type;
+        for (const key of ["fillColor", "lineColor"]) if (patch[key] !== undefined) obj[key] = unityColor(patch[key], key);
+        for (const key of ["lineSize", "sides", "startAngle"]) if (patch[key] !== undefined) obj[key] = patch[key];
+        if (patch.cornerRadius !== undefined) obj.cornerRadius = patch.cornerRadius.join(",");
+        if (patch.points !== undefined) {
+            obj.polygonPoints.Clear();
+            patch.points.forEach(p => obj.polygonPoints.Add(new UnityEngine.Vector2(p.x, p.y)));
+        }
+        if (patch.distances !== undefined) {
+            obj.verticesDistance.Clear(); patch.distances.forEach(v => obj.verticesDistance.Add(v));
+        }
+        obj.UpdateGraph();
+    });
+}
+
+function imageDisplay(obj: any): any {
+    const result: any = { color: colorHex(obj.color).substring(0, 7), alpha: Number(obj.alpha), flip: String(obj.flip), fillMethod: String(obj.fillMethod) };
+    if (result.fillMethod !== "none") Object.assign(result, { fillOrigin: Number(obj.fillOrigin), fillAmount: Number(obj.fillAmount) });
+    if (result.fillMethod.startsWith("radial")) result.fillClockwise = Boolean(obj.fillClockwise);
+    return result;
+}
+
+/** fillAmount 使用 Editor 的百分数 0..100，与 Unity 运行时的 0..1 分开；只改变显示对象。 */
+function setImageDisplay(params: any): any {
+    const doc = getActiveDocument(), obj = editingTarget(params, ["image"]);
+    const patch = visualPatch(params.settings, ["color", "alpha", "flip", "fillMethod", "fillOrigin", "fillAmount", "fillClockwise"]);
+    if (patch.color !== undefined) {
+        const color = normalizedColor(patch.color, "color");
+        // FImage 原生 XML 只保存 RGB；RGBA 的 A 显式映射到可持久化的对象 alpha，不能只改 Unity Color.a。
+        if (color.length === 9) {
+            if (patch.alpha !== undefined) throw new Error("RGBA color 与 alpha 不能同时提供，请选择一种透明度写法");
+            patch.alpha = parseInt(color.substring(7), 16) / 255;
+        }
+        patch.color = color.substring(0, 7);
+    }
+    // Editor 的对象 alpha XML 保留三位小数；写前规范化，使保存后重载与本次返回值一致。
+    if (patch.alpha !== undefined) patch.alpha = Math.fround(Math.round(visualNumber(patch.alpha, "alpha", 0, 1) * 1000) / 1000);
+    if (patch.flip !== undefined) visualEnum(patch.flip, ["none", "hz", "vt", "both"], "flip");
+    const method = patch.fillMethod === undefined ? String(obj.fillMethod) : visualEnum(patch.fillMethod, IMAGE_FILL_METHODS, "fillMethod");
+    if (method === "none" && ["fillOrigin", "fillAmount", "fillClockwise"].some(k => patch[k] !== undefined)) throw new Error("填充关闭时不能设置填充参数，请先或同时指定 fillMethod");
+    if (patch.fillOrigin !== undefined && !Number.isInteger(patch.fillOrigin)) throw new Error("fillOrigin 必须是整数");
+    if (method !== "none") {
+        const hadFill = String(obj.fillMethod) !== "none";
+        const origin = patch.fillOrigin === undefined ? (hadFill ? Number(obj.fillOrigin) : 0) : patch.fillOrigin, maximum = method === "hz" || method === "vt" ? 1 : 3;
+        if (origin < 0 || origin > maximum) throw new Error(`${method} 的 fillOrigin 必须为 0..${maximum}；切换方式时请显式指定合法原点`);
+        if (patch.fillMethod !== undefined && patch.fillMethod !== String(obj.fillMethod)) {
+            // 原生方式切换可能重置参数；活动填充保留旧值，首次启用使用明确默认值，避免依赖隐藏缓存。
+            if (patch.fillOrigin === undefined) patch.fillOrigin = origin;
+            if (patch.fillAmount === undefined) patch.fillAmount = hadFill ? Number(obj.fillAmount) : 100;
+            if (method.startsWith("radial") && patch.fillClockwise === undefined) patch.fillClockwise = hadFill ? Boolean(obj.fillClockwise) : true;
+        }
+    }
+    if (patch.fillAmount !== undefined) patch.fillAmount = visualNumber(patch.fillAmount, "fillAmount", 0, 100);
+    if (patch.fillClockwise !== undefined && (typeof patch.fillClockwise !== "boolean" || !method.startsWith("radial"))) throw new Error("fillClockwise 仅接受径向填充的布尔值");
+    return editObjectSettings(doc, obj, params, () => imageDisplay(obj), patch, () => {
+        if (patch.fillMethod !== undefined) obj.fillMethod = patch.fillMethod;
+        if (patch.color !== undefined) obj.color = unityColor(patch.color, "color");
+        for (const key of ["alpha", "flip", "fillOrigin", "fillAmount", "fillClockwise"]) if (patch[key] !== undefined) obj[key] = patch[key];
+    });
+}
+
+function filterTarget(params: any): any {
+    const obj = editingTarget(params);
+    if (String(obj.objectType).toLowerCase() === "group") throw new Error("逻辑分组不支持独立颜色滤镜，请编辑实际显示对象");
+    return obj;
+}
+
+function filterSettings(obj: any): any {
+    const result: any = { type: String(obj.filter || "none") };
+    if (result.type === "color") FILTER_FIELDS.forEach(k => result[k] = Number(obj.filterData[k]));
+    return result;
+}
+
+/** 原生 FilterData 用副本一次替换；type=none 明确清除，0 是有效参数，不能在原对象上预检修改。 */
+function setFilterSettings(params: any): any {
+    const doc = getActiveDocument(), obj = filterTarget(params), patch = visualPatch(params.settings, ["type", ...FILTER_FIELDS]);
+    const type = patch.type === undefined ? String(obj.filter || "none") : visualEnum(patch.type, ["none", "color"], "type");
+    if (["none", "color"].indexOf(type) < 0) throw new Error("当前滤镜类型未开放；请显式指定 type=color 或 none 才能替换");
+    if (type !== "color" && FILTER_FIELDS.some(k => patch[k] !== undefined)) throw new Error("颜色参数需要先或同时指定 type=color；type=none 仅表示清除");
+    for (const key of FILTER_FIELDS) if (patch[key] !== undefined) patch[key] = visualNumber(patch[key], key, -1, 1);
+    const desired: any = { type };
+    if (type === "color") FILTER_FIELDS.forEach(k => desired[k] = patch[k] === undefined ? (String(obj.filter) === "color" ? Number(obj.filterData[k]) : 0) : patch[k]);
+    return editObjectSettings(doc, obj, params, () => filterSettings(obj), desired, () => {
+        const data = new (FairyEditor as any).FilterData(); data.type = type;
+        if (type === "color") FILTER_FIELDS.forEach(k => data[k] = desired[k]);
+        obj.filterData = data;
+    });
+}
+
 const LIST_SETTING_SPEC: any = { layout: ["column", "row", "flow_hz", "flow_vt", "pagination"], repeatX: "int", repeatY: "int", lineGap: "number", columnGap: "number",
     align: ["left", "center", "right"], vAlign: ["top", "middle", "bottom"], autoResizeItem: "boolean", selectionMode: ["single", "multiple", "multipleSingleClick", "none"], clearOnPublish: "boolean" };
 const GROUP_SETTING_SPEC: any = { advanced: "boolean", layout: ["none", "hz", "vt"], lineGap: "number", columnGap: "number",
@@ -4299,6 +4505,7 @@ const BATCH_FIELDS: { [action: string]: string[] } = {
     set_button_binding: ["target", "settings"], set_list_settings: ["target", "settings"],
     set_list_item_resources: ["target", "settings"],
     set_group_settings: ["target", "settings"], set_input_settings: ["target", "settings"], set_mask_settings: ["settings"],
+    set_graph_settings: ["target", "settings"], set_image_display: ["target", "settings"], set_filter_settings: ["target", "settings"],
     replace_object_resource: ["target", "resourceURL", "expectedType", "preserveSize"],
     set_scroll_settings: ["target", "settings"], set_loader: ["target", "settings"], set_group: ["target", "groupId"],
     add_relation: ["target", "relationTargetId", "relationType", "usePercent"], remove_relation: ["target", "relationTargetId", "relationType"],
@@ -4562,6 +4769,7 @@ function handleCommand(request: AgentRequest): any {
         remove_component_property: true, set_controller_properties: true,
         set_scroll_settings: true, set_group: true, set_group_settings: true, set_input_settings: true, set_mask_settings: true,
         get_group_settings: true, get_input_settings: true, get_mask_settings: true, add_relation: true, remove_relation: true, set_loader: true,
+        get_graph_settings: true, set_graph_settings: true, get_image_display: true, set_image_display: true, get_filter_settings: true, set_filter_settings: true,
         set_text_style: true, replace_object_resource: true,
         set_gear: true,
         upsert_controller_action: true, remove_controller_action: true,
@@ -4610,6 +4818,12 @@ function handleCommand(request: AgentRequest): any {
         case "finish_external_edit": return finishExternalEdit(params);
         case "get_image_settings": return { settings: imageSettings(resolveItem(params)), scope: "package" };
         case "set_image_settings": return setImageSettings(params);
+        case "get_graph_settings": { const obj = editingTarget(params, ["graph"]); return { target: targetSummary(obj, params.target), settings: graphSettings(obj) }; }
+        case "set_graph_settings": return setGraphSettings(params);
+        case "get_image_display": { const obj = editingTarget(params, ["image"]); return { target: targetSummary(obj, params.target), settings: imageDisplay(obj) }; }
+        case "set_image_display": return setImageDisplay(params);
+        case "get_filter_settings": { const obj = filterTarget(params); return { target: targetSummary(obj, params.target), settings: filterSettings(obj), supportedTypes: ["none", "color"] }; }
+        case "set_filter_settings": return setFilterSettings(params);
         case "create_object": return createObject(params);
         case "set_properties": return setProperties(params);
         case "get_button_binding": { const obj = editingTarget(params, ["component"]); return { target: targetSummary(obj, params.target), binding: buttonBinding(obj), controllers: controllerList(getActiveDocument()).map(controllerSnapshot) }; }
