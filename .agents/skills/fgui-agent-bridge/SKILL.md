@@ -58,6 +58,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 - 动画编辑先用 `fgui_list_transitions` / `fgui_get_transition` 读取，再用 `fgui_upsert_transition` 进行整段声明式更新，或用关键帧原子工具局部修改；时间单位是 frame。全部原生 Transition 轨道均使用类型化 JSON。
 - MovieClip 用 `fgui_create_movieclip` 的有序绝对图片路径创建，或通过 `fgui_update_movieclip` 更新帧与播放参数；帧由 FairyGUI 嵌入 `.jta`，不会自动生成逐帧图片 `ui://` 资源。已有 MovieClip 更新/替换可 Agent undo/redo，全新创建和删除不可逆。
 - 用 `fgui_preview_animation` 播放、暂停、停止、跳帧或查询 Transition/MovieClip 预览状态。预览不保存，不能把预览状态描述为资源默认属性。
+- 已有按钮用 `fgui_get/set_button_settings` 区分当前定义和直属实例覆盖；状态图用 `fgui_get/set_button_state_resources`，只编辑唯一原生映射，空 Image 经 Editor 转空 Loader 并返回转换记录。字段、清除和作用域见[按钮编辑](references/button-settings.md)。
 - 按钮状态图顺序固定为 `up/down/over/selectedOver/disabled/selectedDisabled`，非空值必须是工程内图片 `ui://` URL。
 - 资源替换：替换显示对象引用的资源使用 `fgui_replace_object_resource`（支持 Image、Loader 和直属组件实例，不支持 Button 状态资源切换），支持 `expected_type=image/component` 校验，默认保留尺寸；组件内部覆盖遵循 Editor 替换语义并返回前后清单，保存核对完整 XML。
 - 文本样式：使用 `fgui_get_text_style` / `fgui_set_text_style` 编辑字体、颜色、描边/阴影开关及参数、粗体/斜体/下划线、UBB、文本、对齐、间距和自动尺寸。描边/阴影参数需启用对应效果；显式尺寸与自动尺寸冲突时先拒绝。批量几何属性用 `fgui_set_properties`，先设置 Pivot/尺寸、最后写坐标，避免 JSON 顺序引发位移；暂不支持自动 external reload。
@@ -123,15 +124,15 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 脚本会先校验所选目录，再写入目标工程的 `plugins/agent-bridge/`；无效目录或取消选择时不得写入。自动化环境可改用 `--project PATH --apply`。
 
-首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.14.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
+首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.15.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
 
 ```bash
-git clone --branch v0.14.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.15.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
 
-已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.14.0`、`git switch --detach v0.14.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
+已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.15.0`、`git switch --detach v0.15.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
 
 Codex 安装采用两层配置，完整示例见源仓库 README 的安装指南：
 
@@ -210,12 +211,12 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
-- `0.14.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
+- `0.15.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。
 - MovieClip 删除即使传 `force=true` 也会执行引用检查；仍被组件使用时必须先移除引用。
-- `replace_object_resource` 本轮仅允许 Image 与 Loader，拒绝 Button `state` 替换，避免误将整个按钮组件替换为单一资源。
+- `replace_object_resource` 支持 Image、Loader 和直属组件实例资源替换；Button 的 `state` 参数仍拒绝，六态图片使用当前按钮定义的专用 `button_state_resources` 接口。
 - 文本样式修改支持类型与枚举检查，暂不支持自动 external reload。
 - 新原生节点、批量属性、按钮绑定、List/ScrollPane、二维 Loader、分组与 Relations 不提供完整 Agent 撤销，实际修改清除旧历史并保持 dirty。无变化且不保存时保留历史；拒绝的输入不会作为成功写入。不要将控件配置验证等同于运行预览点击、滚动或业务逻辑联调。
 - `verify_document` 可传入 `target + expected` 执行磁盘 XML 持久化比对，失败响应保留结构化 `error.details`（包含 `stage`、expected、actual、differences）。

@@ -1,0 +1,1 @@
+<component size="440,240"><controller name="Parent" pages="p0,Idle,p1,Active"/><displayList><component id="button1" name="first" src="standard" fileName="Standard.xml" xy="10,10"><Button controller="Parent" page="p0"/></component><component id="button2" name="second" src="standard" fileName="Standard.xml" xy="230,10"/></displayList></component>

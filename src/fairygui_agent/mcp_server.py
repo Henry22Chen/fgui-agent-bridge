@@ -836,6 +836,41 @@ def fgui_set_image_settings(settings: dict[str, Any], url: str | None = None, pa
 
 
 @mcp.tool()
+def fgui_get_button_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
+    """读取按钮设置、scope、writableFields 和覆盖标记。省略目标读取当前按钮定义；指定目标仅支持直属 Button 实例。"""
+    target = _target(object_id, object_path, object_name) if any(v is not None for v in (object_id, object_path, object_name)) else {"path": "root"}
+    return _client.call("get_button_settings", {"target": target})
+
+
+@mcp.tool()
+def fgui_set_button_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """省略目标编辑当前按钮定义：mode(common/check/radio)、titleColor、titleFontSize、sound、volume(0..100)、downEffect(none/tint/scale)、downEffectValue(0..1)。
+
+    直属实例只支持 title/selectedTitle/icon/selectedIcon/titleColor/titleFontSize/sound/volume，自动设置必要覆盖标记，不改共享定义。
+    图标/音效为对应包内 ui:// URL，空串清除；定义空音效恢复项目默认，实例空音效明确静音。省略保持；selected 仍用 button_binding。
+    默认不保存；save=true 保存整个当前组件并核对原生 XML，无完整事务回滚。
+    """
+    target = _target(object_id, object_path, object_name) if any(v is not None for v in (object_id, object_path, object_name)) else {"path": "root"}
+    return _client.call("set_button_settings", {"target": target, "settings": settings, "save": save})
+
+
+@mcp.tool()
+def fgui_get_button_state_resources() -> dict[str, Any]:
+    """读取当前按钮定义六态图片、稳定 pageId/targetId 和可写性。只识别显示 Gear 或 Loader Icon Gear；复杂/不唯一结构返回 unsupported_mapping。"""
+    return _client.call("get_button_state_resources")
+
+
+@mcp.tool()
+def fgui_set_button_state_resources(settings: dict[str, Any], save: bool = False) -> dict[str, Any]:
+    """编辑当前按钮定义六态：up/down/over/selectedOver/disabled/selectedDisabled。省略保持，图片 ui:// URL 替换，空串清空对应状态内容。
+
+    不自动创建缺失页面或猜测自定义结构；空 Image 经 Editor 原生转换为 Loader，保留 ID/布局/Gear/Relation 并返回 conversions。
+    此操作影响共享定义的所有实例，不跨文档，不进入实例批量；默认不保存，save=true 保存整个定义并回读。
+    """
+    return _client.call("set_button_state_resources", {"settings": settings, "save": save})
+
+
+@mcp.tool()
 def fgui_get_graph_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
     """读取直属 Graph 的类型、填充/线条及当前类型使用的几何参数；不返回非活动类型的缓存。"""
     return _editing_call("get_graph_settings", object_id, object_path, object_name)

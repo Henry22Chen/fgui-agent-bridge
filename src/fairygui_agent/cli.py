@@ -35,8 +35,8 @@ def print_result(data: Any) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def _add_target_arguments(parser: argparse.ArgumentParser) -> None:
-    target_group = parser.add_mutually_exclusive_group(required=True)
+def _add_target_arguments(parser: argparse.ArgumentParser, required: bool = True) -> None:
+    target_group = parser.add_mutually_exclusive_group(required=required)
     target_group.add_argument("--path", dest="target_path")
     target_group.add_argument("--id", dest="target_id")
     target_group.add_argument("--name", dest="target_name")
@@ -341,6 +341,13 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--insert-index", type=int)
     native.add_argument("--group-member-ids", help="JSON 对象 ID 数组；保存分组时必填")
     native.add_argument("--save", action="store_true")
+    for command in ("get-button-settings", "set-button-settings", "get-button-state-resources", "set-button-state-resources"):
+        p = subparsers.add_parser(command, help="按钮定义/实例设置或当前定义的六态图；省略目标为当前定义")
+        if command.endswith("settings"):
+            _add_target_arguments(p, required=False)
+        if command.startswith("set-"):
+            p.add_argument("settings", help="JSON 设置补丁；省略保持，明确空串清除")
+            p.add_argument("--save", action="store_true")
     for command in ("set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-graph-settings", "set-graph-settings", "get-image-display", "set-image-display", "get-filter-settings", "set-filter-settings", "get-group-settings", "set-group-settings", "get-input-settings", "set-input-settings", "get-mask-settings", "set-mask-settings", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
         p = subparsers.add_parser(command, help="读取/编辑当前文档直属对象，默认不保存")
         if command not in ("get-mask-settings", "set-mask-settings"):
@@ -715,6 +722,13 @@ def main() -> int:
         elif args.command == "get-text-style":
             action = "get_text_style"
             params = {"target": target_from_args(args)}
+        elif args.command in ("get-button-settings", "set-button-settings", "get-button-state-resources", "set-button-state-resources"):
+            action = args.command.replace("-", "_")
+            params = {}
+            if args.command.endswith("settings"):
+                params["target"] = target_from_args(args) if any(getattr(args, k, None) for k in ("target_id", "target_path", "target_name")) else {"path": "root"}
+            if args.command.startswith("set-"):
+                params.update(settings=load_json_value(args.settings), save=args.save)
         elif args.command in ("get-image-settings", "set-image-settings", "create-object", "set-properties", "get-button-binding", "set-button-binding", "get-list-settings", "set-list-settings", "get-list-item-resources", "set-list-item-resources", "get-scroll-settings", "set-scroll-settings", "get-group", "set-group", "get-graph-settings", "set-graph-settings", "get-image-display", "set-image-display", "get-filter-settings", "set-filter-settings", "get-group-settings", "set-group-settings", "get-input-settings", "set-input-settings", "get-mask-settings", "set-mask-settings", "get-relations", "add-relation", "remove-relation", "get-loader", "set-loader"):
             action = args.command.replace("-", "_")
             if args.command == "create-object":

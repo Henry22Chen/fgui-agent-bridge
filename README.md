@@ -2,11 +2,11 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.14.0`
+- **版本**：`0.15.0`
 - **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
-- **MCP 工具数**：101；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
+- **MCP 工具数**：105；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
 
 > **说明**：Bridge 仓库与业务 FairyGUI 工程分开存放。FairyGUI 工程只需安装轻量插件；在宿主 IDE 中可按需安装 Skill 提高 AI 操作准确率。
 
@@ -61,9 +61,9 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 
 安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
-当前发布版本为 `0.14.0`，对应 Git 标签 `v0.14.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+当前发布版本为 `0.15.0`，对应 Git 标签 `v0.15.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
 
-`0.14.0` 新增 Graph 外观、Image 染色/翻转/填充和颜色滤镜六个工具，共 101 个 MCP 工具，协议保持 `2.0`。填充比例使用 Editor 的 0..100 百分数；包级九宫格接口保持原有作用域。详见[外观编辑](.agents/skills/fgui-agent-bridge/references/visual-settings.md)。
+`0.15.0` 新增按钮定义/实例设置与六态资源四个工具，共 105 个 MCP 工具，协议保持 `2.0`。按定义与实例覆盖分别限制字段；状态图只编辑唯一可识别的原生映射。详见[按钮编辑](.agents/skills/fgui-agent-bridge/references/button-settings.md)。
 
 组件实例属性能力需要 Bridge 和插件 `0.11.0`，新增接口见[组件属性说明](.agents/skills/fgui-agent-bridge/references/component-properties.md)。升级后重新加载插件及 MCP 会话，并分别核对两端达到项目指定版本。
 
@@ -75,7 +75,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
 源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
-安装版本：0.14.0，Git 标签 v0.14.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
+安装版本：0.15.0，Git 标签 v0.15.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
@@ -92,7 +92,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
-git clone --branch v0.14.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.15.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
@@ -100,8 +100,8 @@ uv sync --frozen
 检出标签后处于 detached HEAD 是固定版本安装的正常状态。已有 Bridge 安装先运行 `git status --short` 核对并保留未提交改动，再切换到项目指定的标签：
 
 ```bash
-git fetch origin tag v0.14.0
-git switch --detach v0.14.0
+git fetch origin tag v0.15.0
+git switch --detach v0.15.0
 uv sync --frozen
 ```
 
@@ -332,6 +332,7 @@ uv run fgui-agent preview-transition play fadeIn
 | **图形与图片显示** | `fgui_get_graph_settings`、`fgui_set_graph_settings`、`fgui_get_image_display`、`fgui_set_image_display` | 图形填充/线条/圆角/多边形、图片染色/翻转/填充 |
 | **颜色滤镜** | `fgui_get_filter_settings`、`fgui_set_filter_settings` | 亮度、对比度、饱和度、色相及明确清除 |
 | **图片九宫格** | `fgui_get_image_settings`、`fgui_set_image_settings` | 读取与修改图片资源缩放、中心矩形和平铺标志 |
+| **按钮设置与状态图** | `fgui_get_button_settings`、`fgui_set_button_settings`、`fgui_get_button_state_resources`、`fgui_set_button_state_resources` | 定义/实例作用域、选中内容、标题样式、音效与按压效果、可识别六态图片映射 |
 | **按钮绑定** | `fgui_get_button_binding`、`fgui_set_button_binding` | 原生绑定父控制器及页面，设置选中状态 |
 | **列表与滚动** | `fgui_get_list_settings`、`fgui_set_list_settings`、`fgui_get_scroll_settings`、`fgui_set_scroll_settings` | 布局、行列数、间距、发布清空示例项、滚动方向、分页及分页控制器 |
 | **列表项资源与属性** | `fgui_get_list_item_resources`、`fgui_set_list_item_resources` | 默认项资源、预置项资源替换/新增/删除/重排、名称/标题/图标及内部属性和控制器覆盖 |

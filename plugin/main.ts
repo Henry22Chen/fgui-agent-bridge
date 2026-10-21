@@ -11,7 +11,7 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.14.0";
+const BRIDGE_VERSION = "0.15.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1256,6 +1256,7 @@ function writeStatus(): void {
             "get_list_settings", "set_list_settings", "get_list_item_resources", "set_list_item_resources", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
             "get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings",
             "list_clear_on_publish", "replace_component_resource",
+            "get_button_settings", "set_button_settings", "get_button_state_resources", "set_button_state_resources",
             "get_graph_settings", "set_graph_settings", "get_image_display", "set_image_display", "get_filter_settings", "set_filter_settings",
             "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
         ]
@@ -3976,6 +3977,209 @@ function setButtonBinding(params: any): any {
     });
 }
 
+const BUTTON_STATES = ["up", "down", "over", "selectedOver", "disabled", "selectedDisabled"];
+const BUTTON_DEFINITION_FIELDS = ["mode", "titleColor", "titleFontSize", "sound", "volume", "downEffect", "downEffectValue"];
+const BUTTON_INSTANCE_FIELDS = ["title", "selectedTitle", "icon", "selectedIcon", "titleColor", "titleFontSize", "sound", "volume"];
+
+/** 不传 target 编辑当前按钮定义；实例只能写父文档支持的覆盖，不能借此改共享定义。 */
+function buttonTarget(params: any, definitionOnly: boolean = false): any {
+    const doc = getActiveDocument(), obj = editingTarget(params, ["component"], true);
+    if (!obj.extention || String(obj.extentionId).toLowerCase() !== "button") throw new Error("目标必须是 Button 组件");
+    const definition = obj === doc.content;
+    if (definitionOnly && !definition) verificationError("unsupported_scope", "状态图只允许在当前按钮定义文档编辑", {});
+    return { doc, obj, b: obj.extention, definition };
+}
+
+function buttonSettings(t: any): any {
+    const b = t.b, result: any = { titleColor: colorHex(b.titleColor), titleFontSize: Number(b.titleFontSize),
+        sound: String((t.definition ? b.baseSound : b.soundSet ? b.sound : b.baseSound) || ""),
+        volume: Number(t.definition ? b.baseVolume : b.soundSet ? b.volume : b.baseVolume) };
+    if (t.definition) {
+        result.mode = String(b.mode).toLowerCase(); result.downEffect = String(b.downEffect);
+        if (result.downEffect !== "none") result.downEffectValue = Number(b.downEffectValue);
+    } else for (const k of ["title", "selectedTitle", "icon", "selectedIcon"]) result[k] = String(b[k] || "");
+    return result;
+}
+
+function buttonScope(t: any): any {
+    const text = t.b.GetTextField();
+    return { scope: t.definition ? "definition" : "instance", resourceURL: String(t.obj.resourceURL),
+        writableFields: t.definition ? BUTTON_DEFINITION_FIELDS : BUTTON_INSTANCE_FIELDS,
+        sharedImpact: t.definition, preview: { selected: Boolean(t.b.selected), displayedTitle: text ? String(text.text || "") : null },
+        readOnlySettings: t.definition ? {} : { mode: String(t.b.mode).toLowerCase(), downEffect: String(t.b.downEffect) },
+        overrides: t.definition ? {} : { titleColor: Boolean(t.b.titleColorSet), titleFontSize: Boolean(t.b.titleFontSizeSet), sound: Boolean(t.b.soundSet) },
+        note: t.definition ? "修改当前共享按钮定义，影响所有引用实例；模式切换可能改变运行时选中行为，父控制器绑定不改。标题内容请编辑定义内部文本；选中标题/图标属于实例覆盖。"
+            : "只保存父文档的按钮实例覆盖；selected 使用既有 button_binding。mode/按压效果须打开按钮定义编辑。" };
+}
+
+function buttonResource(value: any, type: any, label: string): string {
+    if (typeof value !== "string") throw new Error(`${label} 必须为图片/音效 ui:// URL 或明确空串`);
+    if (!value) return "";
+    if (!value.startsWith("ui://")) throw new Error(`${label} 必须为工程内 ui:// URL`);
+    const item = resolveItem({ url: value });
+    if (item.type !== type) throw new Error(`${label} 资源类型错误`);
+    return String(item.GetURL());
+}
+
+function setButtonSettings(params: any): any {
+    const t = buttonTarget(params), { doc, obj, b, definition } = t;
+    const patch = visualPatch(params.settings, definition ? BUTTON_DEFINITION_FIELDS : BUTTON_INSTANCE_FIELDS);
+    for (const k of ["title", "selectedTitle"]) if (patch[k] !== undefined && typeof patch[k] !== "string") throw new Error(`${k} 必须为字符串，空串表示清除`);
+    for (const k of ["icon", "selectedIcon"]) if (patch[k] !== undefined) patch[k] = buttonResource(patch[k], FairyEditor.FPackageItemType.IMAGE, k);
+    if (patch.sound !== undefined) patch.sound = buttonResource(patch.sound, FairyEditor.FPackageItemType.SOUND, "sound");
+    if (patch.volume !== undefined) patch.volume = visualNumber(patch.volume, "volume", 0, 100);
+    if (patch.mode !== undefined) visualEnum(patch.mode, ["common", "check", "radio"], "mode");
+    if (patch.titleColor !== undefined) {
+        patch.titleColor = visualColor(patch.titleColor, "titleColor");
+        if (patch.titleColor.length !== 7) throw new Error("按钮标题颜色仅支持 RGB；透明度使用显示对象 alpha");
+    }
+    if (patch.titleFontSize !== undefined && (!Number.isInteger(patch.titleFontSize) || patch.titleFontSize < 1 || patch.titleFontSize > 1000)) throw new Error("titleFontSize 必须为 1..1000 整数");
+    if ((patch.titleColor !== undefined || patch.titleFontSize !== undefined) && !b.GetTextField()) throw new Error("按钮没有可编辑的标题文本字段");
+    const effect = patch.downEffect === undefined ? String(b.downEffect) : visualEnum(patch.downEffect, ["none", "tint", "scale"], "downEffect");
+    if (patch.downEffectValue !== undefined) {
+        if (effect === "none") throw new Error("downEffectValue 需要同时或先启用 tint/scale");
+        patch.downEffectValue = visualNumber(patch.downEffectValue, "downEffectValue", 0, 1);
+    }
+    const before = buttonSettings(t), equal = (a: any, v: any) => typeof a === "number" && typeof v === "number" ? Math.abs(a - v) < 0.00001 : valuesEqual(a, v);
+    const changed = Object.keys(patch).some(k => !equal(before[k], patch[k])) || (!definition &&
+        ((patch.titleColor !== undefined && !b.titleColorSet) || (patch.titleFontSize !== undefined && !b.titleFontSizeSet)
+            || ((patch.sound !== undefined || patch.volume !== undefined) && !b.soundSet)));
+    const result = editComponentMetadata(doc, obj, params, () => buttonSettings(t), changed, () => {
+        // sound/volume 共用一个实例覆盖标记；首次覆盖时补齐另一项的有效定义值，避免默认 100 覆盖定义音量。
+        if (!definition && (patch.sound !== undefined || patch.volume !== undefined) && !b.soundSet) { b.sound = before.sound; b.volume = before.volume; }
+        for (const k of Object.keys(patch)) {
+            if (k === "mode") b.mode = normalizeButtonMode(patch[k]);
+            else if (k === "titleColor") b.titleColor = unityColor(patch[k], k);
+            else b[definition && k === "sound" ? "baseSound" : definition && k === "volume" ? "baseVolume" : k] = patch[k];
+        }
+        if (!definition) {
+            if (patch.titleColor !== undefined) b.titleColorSet = true;
+            if (patch.titleFontSize !== undefined) b.titleFontSizeSet = true;
+            if (patch.sound !== undefined || patch.volume !== undefined) b.soundSet = true;
+        }
+        const after = buttonSettings(t);
+        if (Object.keys(patch).some(k => !equal(after[k], patch[k]))) throw new Error("Editor 未接受全部按钮设置");
+    });
+    return { ...result, ...buttonScope(t) };
+}
+
+/** 仅识别 button 控制器的页面身份与显示/Icon Gear；不按背景、图标等对象名称猜测。 */
+function buttonStateMapping(): any {
+    const t = buttonTarget({}, true), controllers = controllerList(t.doc).filter(c => String(c.name) === "button"), candidates: any[] = [];
+    const fail = (reason: string): never => verificationError("unsupported_mapping", reason, { candidates });
+    if (controllers.length !== 1) fail("需要唯一的原生 button 状态控制器");
+    const controller = controllers[0], pages = controllerSnapshot(controller).pages, entries: any = {};
+    for (const state of BUTTON_STATES) {
+        const matches = pages.filter(p => p.name === state);
+        if (matches.length > 1) fail(`状态页面 ${state} 不唯一`);
+        entries[state] = { pageId: matches.length ? matches[0].id : null, candidates: [] };
+    }
+    for (let i = 0; i < t.obj.numChildren; i++) {
+        const obj = t.obj.GetChildAt(i), type = String(obj.objectType).toLowerCase();
+        if (["image", "loader"].indexOf(type) < 0) continue;
+        const xml = obj.WriteGears(), display = xml.GetNode("gearDisplay"), icon = xml.GetNode("gearIcon");
+        const isBound = (node: any) => node && String(node.GetAttribute("controller")) === String(controller.name);
+        if (!isBound(display) && !isBound(icon)) continue;
+        const candidate: any = { targetId: String(obj.id), type, kind: isBound(icon) ? "iconGear" : "displayGear" }; candidates.push(candidate);
+        if (isBound(icon)) {
+            if (type !== "loader" || display || xml.GetNode("gearDisplay2")) fail("Icon Gear 仅支持无显隐 Gear 的直属 Loader");
+            const gear = gearDescription("icon", icon);
+            // 无回退页时 Editor 可能省略 Gear 默认值；使用原生序列化的基础 url，不能按当前切页后的 obj.url 猜测。
+            if (gear.defaultValue === null) gear.defaultValue = String(obj.Write().GetAttribute("url") || "");
+            if (gear.pageValues.some(p => p.value === null) || new Set(gear.pageValues.map(p => p.pageId)).size !== gear.pageValues.length
+                || gear.pageValues.some(p => !pages.some(page => page.id === p.pageId))) fail("Icon Gear 的默认值或页面映射不完整/重复");
+            for (const state of BUTTON_STATES) if (entries[state].pageId !== null) {
+                const value = gear.pageValues.find(p => p.pageId === entries[state].pageId);
+                entries[state].candidates.push({ obj, kind: "iconGear", url: value ? value.value : gear.defaultValue, gear });
+            }
+        } else {
+            const ids = gearDescription("display", display).visiblePageIds;
+            if (ids.length !== 1 || xml.GetNode("gearDisplay2") || icon) fail("显示状态图必须唯一绑定一个状态页，不能混用第二显隐或 Icon Gear");
+            const state = BUTTON_STATES.find(s => entries[s].pageId === ids[0]);
+            if (!state) fail("图片显隐 Gear 引用了非原生状态页");
+            entries[state].candidates.push({ obj, kind: "displayGear", url: type === "image" ? String(obj.resourceURL) : String(obj.url || "") });
+        }
+    }
+    for (const state of BUTTON_STATES) if (entries[state].candidates.length > 1) fail(`${state} 存在多个图片候选`);
+    return { ...t, controller, entries, candidates };
+}
+
+function buttonStateResources(mapping: any): any {
+    const settings: any = {}, states: any = {};
+    for (const state of BUTTON_STATES) {
+        const entry = mapping.entries[state], candidate = entry.candidates[0];
+        settings[state] = candidate ? candidate.url : "";
+        states[state] = { pageId: entry.pageId, targetId: candidate ? String(candidate.obj.id) : null, mapping: candidate ? candidate.kind : null,
+            writable: Boolean(candidate), reason: candidate ? null : entry.pageId === null ? "状态页不存在；保留原生状态回退" : "没有唯一的状态图载体" };
+    }
+    return { scope: "definition", sharedImpact: true, documentUrl: String(mapping.obj.resourceURL), settings, states,
+        note: "只编辑当前定义的已识别映射。省略保持；空串清空对应载体内容，不删除页面，不替换其他状态的回退关系。缺少页面/载体时不自动推断结构。" };
+}
+
+function buttonCarrierSnapshot(obj: any): any {
+    const xml = obj.Write(), relations: any[] = [];
+    for (let i = 0; i < xml.elements.Count; i++) if (String(xml.elements.get_Item(i).name) === "relation") relations.push(gearXmlData(xml.elements.get_Item(i)));
+    const result: any = { gears: gearXmlData(obj.WriteGears()), relations };
+    for (const k of ["id", "name", "x", "y", "width", "height", "scaleX", "scaleY", "pivotX", "pivotY", "anchor", "skewX", "skewY", "rotation", "alpha", "visible", "touchable", "grayed", "groupId"]) result[k] = obj[k];
+    return result;
+}
+
+function setButtonStateResources(params: any): any {
+    const mapping = buttonStateMapping(), { doc, obj } = mapping, patch = visualPatch(params.settings, BUTTON_STATES), before = buttonStateResources(mapping).settings;
+    for (const state of Object.keys(patch)) {
+        patch[state] = buttonResource(patch[state], FairyEditor.FPackageItemType.IMAGE, state);
+        const candidate = mapping.entries[state].candidates[0];
+        if (!candidate && patch[state] !== "") verificationError("unsupported_mapping", `${state} 没有唯一可写载体`, buttonStateResources(mapping));
+        if (candidate && !patch[state] && String(candidate.obj.objectType).toLowerCase() === "image") {
+            const attrs = gearXmlData(candidate.obj.Write()).attrs;
+            if (["color", "flip", "fillMethod"].some(k => attrs[k] !== undefined)) verificationError("unsupported_mapping", "带染色/翻转/填充的 Image 不能无损转换为空 Loader", { state, targetId: candidate.obj.id });
+        }
+    }
+    const conversions: any[] = [], changed = Object.keys(patch).some(k => patch[k] !== before[k]);
+    const read = () => {
+        try { return buttonStateResources(buttonStateMapping()).settings; }
+        catch (error) { return { unavailable: true, reason: String(error) }; }
+    };
+    const result = editComponentMetadata(doc, obj, params, read, changed, () => {
+        // 每个 Loader 的 Gear 一次更新，保留默认值、未修改页面和 Gear 的附加设置。
+        const iconUpdates = new Map<any, any>();
+        for (const state of Object.keys(patch).filter(s => patch[s] !== before[s])) {
+            const candidate = mapping.entries[state].candidates[0];
+            if (candidate.kind === "iconGear") {
+                const update = iconUpdates.get(candidate.obj) || { ...candidate.gear, pageValues: candidate.gear.pageValues.map(p => ({ ...p })) };
+                let value = update.pageValues.find(p => p.pageId === mapping.entries[state].pageId);
+                if (!value) { value = { pageId: mapping.entries[state].pageId, value: patch[state] }; update.pageValues.push(value); } else value.value = patch[state];
+                iconUpdates.set(candidate.obj, update); continue;
+            }
+            let carrier = candidate.obj;
+            const snapshot = buttonCarrierSnapshot(carrier), id = String(carrier.id);
+            if (String(carrier.objectType).toLowerCase() === "image") {
+                doc.SetSelection(carrier); doc.ReplaceSelection(patch[state] || "loader"); carrier = resolveObject(doc, { id });
+                if (!patch[state]) {
+                    // Image 按对象尺寸拉伸；空 Loader 默认不缩放，必须保留拉伸语义，否则恢复资源后会缩回图片原始尺寸。
+                    carrier.fill = "scaleFree";
+                    conversions.push({ state, targetId: id, from: "image", to: "loader" });
+                }
+                carrier.SetSize(snapshot.width, snapshot.height, true); carrier.touchable = snapshot.touchable;
+            }
+            if (String(carrier.objectType).toLowerCase() === "loader") carrier.url = patch[state];
+            if (!valuesEqual(snapshot, buttonCarrierSnapshot(carrier))) throw new Error("状态图替换改变了 ID、布局、Gear 或 Relation");
+        }
+        iconUpdates.forEach((gear, carrier) => {
+            const Xml = (CS as any).FairyGUI.Utils.XML, old = carrier.WriteGears(), xml = new Xml(String(old.ToXMLString(false))), node = xml.GetNode("gearIcon");
+            node.SetAttribute("default", gear.defaultValue); node.SetAttribute("pages", gear.pageValues.map(p => p.pageId).join(","));
+            node.SetAttribute("values", gear.pageValues.map(p => p.value).join("|"));
+            carrier.ReadGears(xml);
+            for (const controller of controllerList(doc)) carrier.HandleControllerChanged(controller);
+            const untouched = (root: any) => gearNodes(root).filter(n => String(n.name) !== "gearIcon").map(gearXmlData);
+            if (!valuesEqual(untouched(old), untouched(carrier.WriteGears()))) throw new Error("状态图片修改影响了其它 Gear");
+        });
+        const after = read();
+        if (BUTTON_STATES.some(state => after[state] !== (patch[state] === undefined ? before[state] : patch[state]))) throw new Error("状态图回读不一致或影响了其它状态");
+    });
+    return { ...result, ...buttonStateResources(buttonStateMapping()), conversions };
+}
+
 const GRAPH_TYPES = ["empty", "rect", "ellipse", "polygon", "regular_polygon"];
 const IMAGE_FILL_METHODS = ["none", "hz", "vt", "radial90", "radial180", "radial360"];
 const FILTER_FIELDS = ["brightness", "contrast", "saturation", "hue"];
@@ -4502,7 +4706,7 @@ const BATCH_FIELDS: { [action: string]: string[] } = {
     create_object: ["objectType", "name", "x", "y", "width", "height", "insertIndex", "groupMemberIds"],
     insert_object: ["url", "name", "x", "y", "insertIndex"],
     set_properties: ["target", "properties"], set_text_style: ["target", "style"],
-    set_button_binding: ["target", "settings"], set_list_settings: ["target", "settings"],
+    set_button_binding: ["target", "settings"], set_button_settings: ["target", "settings"], set_list_settings: ["target", "settings"],
     set_list_item_resources: ["target", "settings"],
     set_group_settings: ["target", "settings"], set_input_settings: ["target", "settings"], set_mask_settings: ["settings"],
     set_graph_settings: ["target", "settings"], set_image_display: ["target", "settings"], set_filter_settings: ["target", "settings"],
@@ -4769,6 +4973,7 @@ function handleCommand(request: AgentRequest): any {
         remove_component_property: true, set_controller_properties: true,
         set_scroll_settings: true, set_group: true, set_group_settings: true, set_input_settings: true, set_mask_settings: true,
         get_group_settings: true, get_input_settings: true, get_mask_settings: true, add_relation: true, remove_relation: true, set_loader: true,
+        get_button_settings: true, set_button_settings: true, get_button_state_resources: true, set_button_state_resources: true,
         get_graph_settings: true, set_graph_settings: true, get_image_display: true, set_image_display: true, get_filter_settings: true, set_filter_settings: true,
         set_text_style: true, replace_object_resource: true,
         set_gear: true,
@@ -4818,6 +5023,10 @@ function handleCommand(request: AgentRequest): any {
         case "finish_external_edit": return finishExternalEdit(params);
         case "get_image_settings": return { settings: imageSettings(resolveItem(params)), scope: "package" };
         case "set_image_settings": return setImageSettings(params);
+        case "get_button_settings": { assertKnownKeys(params, ["target"], "params"); const t = buttonTarget(params); return { target: targetSummary(t.obj, params.target), ...buttonScope(t), settings: buttonSettings(t) }; }
+        case "set_button_settings": assertKnownKeys(params, ["target", "settings", "save"], "params"); return setButtonSettings(params);
+        case "get_button_state_resources": assertKnownKeys(params, [], "params"); return buttonStateResources(buttonStateMapping());
+        case "set_button_state_resources": assertKnownKeys(params, ["settings", "save"], "params"); return setButtonStateResources(params);
         case "get_graph_settings": { const obj = editingTarget(params, ["graph"]); return { target: targetSummary(obj, params.target), settings: graphSettings(obj) }; }
         case "set_graph_settings": return setGraphSettings(params);
         case "get_image_display": { const obj = editingTarget(params, ["image"]); return { target: targetSummary(obj, params.target), settings: imageDisplay(obj) }; }
