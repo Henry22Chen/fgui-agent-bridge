@@ -767,8 +767,40 @@ def fgui_get_objects(document_url: str, targets: list[dict[str, str]], fields: l
 
 
 @mcp.tool()
+def fgui_get_child_order() -> dict[str, Any]:
+    """读取当前根下全部直属对象的稳定 ID、完整 child index 顺序、分组与渲染模式；末尾在常规 ascent 模式绘制于前。"""
+    return _client.call("get_child_order")
+
+
+@mcp.tool()
+def fgui_reorder_objects(ordered_ids: list[str], save: bool = False) -> dict[str, Any]:
+    """按完整 ID 清单重排当前根下全部对象，拒绝重复、遗漏、外来 ID；返回 beforeOrder/afterOrder。
+
+    不修改分组或 childrenRenderOrder。默认不保存；save=true 保存整个组件并核对原生 XML，失败不自动回滚。
+    """
+    return _client.call("reorder_objects", {"orderedIds": ordered_ids, "save": save})
+
+
+@mcp.tool()
+def fgui_duplicate_objects(targets: list[dict[str, str]], offset: dict[str, Any] | None = None, naming_policy: Literal["auto_rename", "error"] = "auto_rename", names: dict[str, str] | None = None, external_references: Literal["reject", "preserve"] = "reject", refs: dict[str, str] | None = None, save: bool = False) -> dict[str, Any]:
+    """复制当前文档 1..200 个直属对象；target 每项仅 id/path/name，组会展开全部成员。ID 由 Editor 分配，不经过剪贴板。
+
+    offset={x,y} 默认0；names 按源 ID 指定名称，缺省为原名_copy；命名冲突默认加序号，error 写前拒绝。
+    内部 Relation/分组重映射；集合外引用默认拒绝，preserve 明确保留。只复制父文档配置，不复制共享资源或根控制器/Transition，不改根遮罩引用。
+    返回 created、idMap、实际顺序；refs={源ID:别名} 返回 aliases，批量后续可用 $别名。多对象复制禁止单一操作 ref。
+    GearXY 非零偏移须为整数，百分比位置 Gear 仅零偏移；默认不保存，无完整撤销，失败返回已创建 ID。
+    """
+    # 保留 offset 原始 JSON 类型，由原生预检拒绝字符串/布尔值，避免 Pydantic 自动转数值后发生意外复制。
+    params: dict[str, Any] = {"targets": targets, "namingPolicy": naming_policy, "externalReferences": external_references, "save": save}
+    if offset is not None: params["offset"] = offset
+    if names is not None: params["names"] = names
+    if refs is not None: params["refs"] = refs
+    return _client.call("duplicate_objects", params)
+
+
+@mcp.tool()
 def fgui_apply_batch(document_url: str, expected_revision: str, operation_key: str, operations: list[dict[str, Any]], dry_run: bool = False, save: bool = False, verbose: bool = False) -> CallToolResult:
-    """一条队列请求执行 1..200 项白名单操作；每项 {action,params,ref?}。params 用 Bridge camelCase，target={id/path/name}；创建 ref 后用 target.id='$ref' 引用。支持原生创建/已有图片组件插入、属性/文本/绑定/布局/分组/关系/Gear/控制器及对象移除，禁止导入发布或逐步保存。dry_run 仅结构/引用预检；失败可能部分执行、不自动保存/回滚。超时用 operation_key 查回执，相同键参数不能改变。默认摘要；save=true 仅整批结束保存当前组件。"""
+    """一条队列请求执行 1..200 项白名单操作；每项 {action,params,ref?}。params 用 Bridge camelCase，target={id/path/name}；创建 ref 后用 target.id='$ref' 引用，复制用 params.refs={源ID:别名}，多对象复制禁止操作级 ref。支持原生创建/插入/复制/全序重排、属性/文本/绑定/布局/分组/关系/Gear/控制器及对象移除，禁止导入发布或逐步保存。dry_run 仅结构/引用预检；失败可能部分执行、不自动保存/回滚。超时用 operation_key 查回执，相同键参数不能改变。默认摘要；save=true 仅整批结束保存当前组件。"""
     validate_batch(operations, operation_key)
     params = {"documentUrl": document_url, "expectedRevision": expected_revision, "operationKey": operation_key,
               "operations": operations, "dryRun": dry_run, "save": save, "verbose": verbose}

@@ -14,6 +14,8 @@ from .capture import MAX_BYTES, capture_result
 
 
 BATCH_FIELDS = {
+    "duplicate_objects": {"targets", "offset", "namingPolicy", "names", "externalReferences", "refs"},
+    "reorder_objects": {"orderedIds"},
     "create_object": {"objectType", "name", "x", "y", "width", "height", "insertIndex", "groupMemberIds"},
     "insert_object": {"url", "name", "x", "y", "insertIndex"},
     "set_properties": {"target", "properties"}, "set_text_style": {"target", "style"},
@@ -60,6 +62,13 @@ def validate_batch(operations: list[dict[str, Any]], operation_key: str) -> None
             if op["action"] not in {"create_object", "insert_object"} or not isinstance(ref, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,31}", ref) or ref in refs:
                 raise ValueError(f"第 {index} 项 ref 无效或重复")
             refs.add(ref)
+        if op['action'] == 'duplicate_objects':
+            aliases = params.get('refs', {})
+            if not isinstance(aliases, dict) or any(not isinstance(key, str) or not key or not isinstance(value, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,31}", value) for key, value in aliases.items()):
+                raise ValueError('复制 refs 必须为源 ID 到有效别名的字典')
+            if len(set(aliases.values())) != len(aliases) or set(aliases.values()) & refs:
+                raise ValueError('复制 refs 别名不能重复或覆盖前序操作')
+            refs.update(aliases.values())
 
 
 def batch_tool_result(value: dict[str, Any]) -> CallToolResult:

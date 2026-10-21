@@ -1,0 +1,13 @@
+<component size="800,600"><controller name="State" pages="s0,Idle,s1,Active" selected="0"/><displayList>
+<graph id="rectA" name="panel" xy="20,20" size="180,140" group="grp1" type="rect" lineSize="0" fillColor="#ff2563eb"/>
+<text id="label1" name="label" xy="40,40" size="120,40" group="grp1" fontSize="24" color="#ffffff" bold="true" autoSize="none" text="First"><gearText controller="State" pages="s1" values="Second" default="First"/><gearXY controller="State" pages="s1" values="60,55" default="40,40"/><relation target="rectA" sidePair="left-left,top-top"/></text>
+<group id="grp1" name="cluster" xy="20,20" size="180,140" advanced="true"/>
+<graph id="external" name="external" xy="30,240" size="160,100" type="rect" lineSize="0" fillColor="#ff16a34a"/>
+<text id="linked" name="linked" xy="40,260" size="140,36" fontSize="20" color="#ffffff" autoSize="none" text="External"><relation target="external" sidePair="left-left,top-top"/></text>
+<component id="instance1" name="instance" src="child" fileName="Child.xml" xy="30,400"/>
+<component id="instance2" name="sibling" src="child" fileName="Child.xml" xy="180,400"/>
+<list id="list1" name="items" xy="300,20" size="160,160" defaultItem="ui://struct00child"><item title="One"/><item title="Two"/></list>
+<image id="picture" name="picture" src="panel" fileName="Pattern.png" xy="710,30" size="64,64" flip="hz"/>
+<graph id="over1" name="blue" xy="500,300" size="120,120" type="rect" lineSize="0" fillColor="#ff2563eb"/>
+<graph id="over2" name="red" xy="550,350" size="120,120" type="rect" lineSize="0" fillColor="#ffdc2626"/>
+</displayList></component>

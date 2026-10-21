@@ -19,12 +19,14 @@
 }
 ```
 
-`params` 是原生 Bridge 参数名（camelCase），不是单工具的 Python 参数名。`target` 必须且只能有 id/path/name 一个字段。ref 只标记创建/插入操作，后续 target.id、groupId、relationTargetId、groupMemberIds 可以使用 `$ref`，不支持前向引用；文本中出现 `$` 不会被替换。
+`params` 是原生 Bridge 参数名（camelCase），不是单工具的 Python 参数名。`target` 必须且只能有 id/path/name 一个字段。操作级 ref 只标记创建/插入操作；复制改用 params.refs={源ID:别名}。后续 target.id、targets[].id、groupId、relationTargetId、groupMemberIds、orderedIds 和 names/refs 的源键可以使用 `$ref`，不支持前向引用；文本中出现 `$` 不会被替换。复制的展开成员与全序清单示例见[对象结构编辑](object-structure.md)。
 
 | action | params |
 |---|---|
 | create_object | objectType, name?, x?, y?, width?, height?, insertIndex?, groupMemberIds? |
 | insert_object | url, name?, x?, y?, insertIndex?；仅已有 Image/Component，不触发复杂资源修复 |
+| duplicate_objects | targets, offset?, namingPolicy?, names?, externalReferences?, refs?；根下对象、组展开；禁止操作级 ref |
+| reorder_objects | orderedIds；必须覆盖执行时全部直属对象的最终有序 ID |
 | set_properties / set_text_style | target, properties / style |
 | set_button_binding / set_list_settings / set_scroll_settings / set_loader / set_group_settings / set_input_settings | target, settings |
 | set_button_settings | target, settings；仅直属按钮实例覆盖，禁止根定义和状态资源编辑 |

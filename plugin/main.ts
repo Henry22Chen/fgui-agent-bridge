@@ -11,7 +11,7 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.15.0";
+const BRIDGE_VERSION = "0.16.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1256,6 +1256,7 @@ function writeStatus(): void {
             "get_list_settings", "set_list_settings", "get_list_item_resources", "set_list_item_resources", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
             "get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings",
             "list_clear_on_publish", "replace_component_resource",
+            "duplicate_objects", "get_child_order", "reorder_objects",
             "get_button_settings", "set_button_settings", "get_button_state_resources", "set_button_state_resources",
             "get_graph_settings", "set_graph_settings", "get_image_display", "set_image_display", "get_filter_settings", "set_filter_settings",
             "get_relations", "add_relation", "remove_relation", "get_loader", "set_loader"
@@ -1904,6 +1905,11 @@ function findObjectById(root: FairyEditor.FObject, id: string): FairyEditor.FObj
     if (typeof component.numChildren !== "number")
         return null;
 
+    // ID 在组件内唯一，实例/List 内部可与父文档对象重名；先查同层，避免根对象被更早的嵌套对象遮蔽。
+    for (let i = 0; i < component.numChildren; i++) {
+        const child = component.GetChildAt(i);
+        if (child.id === id) return child;
+    }
     for (let i = 0; i < component.numChildren; i++) {
         const found = findObjectById(component.GetChildAt(i), id);
         if (found)
@@ -4684,6 +4690,205 @@ function guardedDocument(url: any, expectedRevision?: any): any {
     return doc;
 }
 
+function structureChildren(doc: any): any[] {
+    const result: any[] = [];
+    for (let i = 0; i < doc.content.numChildren; i++) result.push(doc.content.GetChildAt(i));
+    return result;
+}
+
+function childOrder(doc: any): any {
+    const children = structureChildren(doc).map((obj, index) => ({ id: String(obj.id), name: String(obj.name), type: String(obj.objectType), index,
+        groupId: String(obj.groupId || ""), resourceURL: obj.resourceURL ? String(obj.resourceURL) : null }));
+    return { documentUrl: String(doc.content.resourceURL), revision: documentRevision(doc), order: children.map(v => v.id), children,
+        childrenRenderOrder: String(doc.content.childrenRenderOrder), apexIndex: Number(doc.content.apexIndex), modified: Boolean(doc.isModified),
+        note: "order 为根下全部直属对象的 child index 顺序；常规 ascent 模式末尾绘制在前。分组不是嵌套父子层级，自定义渲染顺序保持不变。" };
+}
+
+function reorderObjects(params: any): any {
+    const doc = getActiveDocument(), before = childOrder(doc).order, ids = params.orderedIds;
+    if (!Array.isArray(ids) || ids.length !== before.length || ids.some(id => typeof id !== "string" || before.indexOf(id) < 0) || new Set(ids).size !== ids.length)
+        throw new Error("orderedIds 必须完整且唯一地覆盖当前全部直属对象 ID，不能遗漏、重复或引用外来对象");
+    const result = editComponentMetadata(doc, doc.content, params, () => ({ order: childOrder(doc).order }), !valuesEqual(before, ids), () => {
+        ids.forEach((id, index) => doc.content.SetChildIndex(resolveObject(doc, { id }), index));
+        doc.content.UpdateDisplayList(true);
+        if (!valuesEqual(childOrder(doc).order, ids)) throw new Error("Editor 未接受全部显示层级顺序");
+    });
+    return { ...result, beforeOrder: before, afterOrder: childOrder(doc).order, ...childOrder(doc) };
+}
+
+function structureMap(value: any, label: string): any {
+    if (value === undefined) return {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是源 ID 到字符串的对象`);
+    for (const key of Object.keys(value)) if (!key || typeof value[key] !== "string" || !value[key]) throw new Error(`${label} 的 ID 和值必须为非空字符串`);
+    return value;
+}
+
+/** 复制名称和批量别名在分配任何新对象前确定；别名按源 ID 声明，不把多对象复制冒充单一 create ref。 */
+function duplicateAliases(value: any): any {
+    const refs = structureMap(value, "refs"), seen = new Set<string>();
+    for (const key of Object.keys(refs)) {
+        const name = refs[key];
+        if (!/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(name) || seen.has(name)) throw new Error("refs 别名必须唯一，使用 1..32 位字母数字/下划线/横线且以字母开头");
+        seen.add(name);
+    }
+    return refs;
+}
+
+/** 按 Editor XML 的三位小数坐标精度处理位移；GearXY 仍遵守原生整数值格式。 */
+function duplicateCoordinate(value: any, label: string): number {
+    if (typeof value !== "number") throw new Error(`${label} 必须是有限数字`);
+    return Math.round(numberValue(value, label, -1000000, 1000000) * 1000) / 1000;
+}
+
+function offsetDuplicateXml(xml: any, offset: any): void {
+    const add = (text: string, integer: boolean = false): string => {
+        const parts = text.split(",").map(Number);
+        if (parts.length !== 2 || parts.some(v => !Number.isFinite(v))) throw new Error("源坐标格式不受支持");
+        const x = duplicateCoordinate(parts[0] + offset.x, "复制后 x"), y = duplicateCoordinate(parts[1] + offset.y, "复制后 y");
+        if (integer && (!Number.isInteger(x) || !Number.isInteger(y))) throw new Error("带 GearXY 的复制偏移必须保持整数坐标");
+        return `${x},${y}`;
+    };
+    xml.SetAttribute("xy", add(String(xml.GetAttribute("xy") || "0,0")));
+    const gear = xml.GetNode("gearXY");
+    if (!gear || (!offset.x && !offset.y)) return;
+    if (gear.GetAttribute("positionsInPercent") || gear.GetAttribute("percent")) throw new Error("百分比位置 Gear 仅支持零偏移复制，不能猜测像素与百分比换算");
+    const fallback = gear.GetAttribute("default"), values = gear.GetAttribute("values");
+    if (fallback !== null) gear.SetAttribute("default", add(String(fallback), true));
+    if (values) gear.SetAttribute("values", String(values).split("|").map(v => add(v, true)).join("|"));
+}
+
+function prepareDuplicate(params: any): any {
+    const doc = getActiveDocument(), children = structureChildren(doc), selected = new Set<any>(), requested = new Set<any>();
+    if (doc.openedGroup) throw new Error("复制只作用于文档根；请先退出组内部编辑状态，避免 Editor 自动将新对象归入当前组");
+    if (!Array.isArray(params.targets) || !params.targets.length || params.targets.length > 200) throw new Error("targets 必须包含 1..200 个直属对象定位");
+    for (const target of params.targets) {
+        validateBatchTarget(target);
+        const obj = editingTarget({ target });
+        if (requested.has(obj)) throw new Error("targets 不能重复定位同一对象");
+        selected.add(obj); requested.add(obj);
+    }
+    // 逻辑分组的成员仍是根下直属对象；按传递闭包展开，保留原先相对层级顺序。
+    for (let count = -1; count !== selected.size;) {
+        count = selected.size;
+        for (const obj of Array.from(selected)) if (String(obj.objectType).toLowerCase() === "group") {
+            const members = children.filter(child => String(child.groupId || "") === String(obj.id));
+            if (!members.length) throw new Error("不能复制无法持久化的空分组");
+            members.forEach(member => selected.add(member));
+        }
+    }
+    if (selected.size > 200) throw new Error("展开组成员后的复制集合超过 200 个对象");
+    const naming = params.namingPolicy === undefined ? "auto_rename" : visualEnum(params.namingPolicy, ["auto_rename", "error"], "namingPolicy");
+    const policy = params.externalReferences === undefined ? "reject" : visualEnum(params.externalReferences, ["reject", "preserve"], "externalReferences");
+    const offset = params.offset === undefined ? { x: 0, y: 0 } : params.offset;
+    if (!offset || typeof offset !== "object" || Array.isArray(offset)) throw new Error("offset 必须为 x/y 对象");
+    assertKnownKeys(offset, ["x", "y"], "offset");
+    const delta = { x: duplicateCoordinate(offset.x === undefined ? 0 : offset.x, "offset.x"), y: duplicateCoordinate(offset.y === undefined ? 0 : offset.y, "offset.y") };
+    const names = structureMap(params.names, "names"), refs = duplicateAliases(params.refs), used = new Set(children.map(obj => String(obj.name))), external: any[] = [];
+    for (const key of Object.keys(names).concat(Object.keys(refs))) if (!Array.from(selected).some(obj => String(obj.id) === key)) throw new Error("names/refs 的源 ID 必须属于本次复制集合（包括展开的组成员）");
+    const Xml = (CS as any).FairyGUI.Utils.XML;
+    const sources = children.filter(obj => selected.has(obj)).map(obj => {
+        const type = String(obj.objectType).toLowerCase();
+        if (["text", "richtext", "inputtext", "graph", "image", "loader", "loader3d", "movieclip", "list", "group", "component"].indexOf(type) < 0) throw new Error(`暂未支持此对象类型复制：${type}`);
+        const xml = new Xml(String(obj.Write().ToXMLString(false))), id = String(obj.id);
+        let name = names[id] || `${obj.name || type}_copy`;
+        if (/[\/\\\x00-\x1f]/.test(name) || !name.trim() || name.length > 200) throw new Error("复制名称不能为空、超过 200 字符或含路径/控制字符");
+        const base = name; let index = 2;
+        if (naming === "error" && used.has(name)) throw new Error(`复制名称已存在：${name}`);
+        while (used.has(name)) name = `${base}_${index++}`;
+        if (name.length > 200) throw new Error("自动避让后的名称超过 200 字符，请指定较短名称");
+        used.add(name); xml.SetAttribute("name", name); offsetDuplicateXml(xml, delta);
+        const addReference = (targetId: string, kind: string): void => {
+            if (!targetId || Array.from(selected).some(candidate => String(candidate.id) === targetId)) return;
+            const target = children.find(candidate => String(candidate.id) === targetId);
+            if (!target) throw new Error(`源 ${kind} 引用不存在：${targetId}`);
+            external.push({ sourceId: id, kind, targetId });
+        };
+        addReference(String(obj.groupId || ""), "group");
+        for (let i = 0; i < xml.elements.Count; i++) {
+            const node = xml.elements.get_Item(i);
+            if (String(node.name) === "relation") addReference(String(node.GetAttribute("target") || ""), "relation");
+        }
+        return { obj, xml, id, name, type };
+    });
+    if (policy === "reject" && external.length) verificationError("external_reference", "复制集合引用了外部对象；请扩大集合或明确 externalReferences=preserve", { externalReferences: external });
+    for (const obj of children) {
+        const seen = new Set<string>(); let current = obj;
+        while (current && current.groupId) {
+            if (seen.has(String(current.groupId))) throw new Error("源分组存在循环，不能可靠复制");
+            seen.add(String(current.groupId)); current = children.find(child => String(child.id) === String(current.groupId));
+        }
+    }
+    return { doc, sources, requested: Array.from(requested).map(obj => String(obj.id)), offset: delta, policy, refs, external };
+}
+
+function structureMetadata(doc: any): any {
+    const data = gearXmlData(doc.content.Write_editMode());
+    data.children = data.children.filter(node => node.name !== "displayList");
+    return data;
+}
+
+/** 先由 InsertObject 分配所有 ID，再通过原生 Read 接口载入快照和重映射引用；不触碰任何系统剪贴板格式。 */
+function duplicateObjects(params: any): any {
+    const plan = prepareDuplicate(params), { doc, sources } = plan, original = structureChildren(doc), beforeOrder = original.map(obj => String(obj.id));
+    const idMap: any = Object.create(null), allocated: any[] = [], aliases: any = Object.create(null), metadata = structureMetadata(doc);
+    const originals = original.map(obj => ({ id: String(obj.id), xml: gearXmlData(obj.Write()) }));
+    const affected = () => originals.filter(entry => !valuesEqual(entry.xml, gearXmlData(resolveObject(doc, { id: entry.id }).Write()))).map(entry => entry.id);
+    const read = () => ({ order: childOrder(doc).order, createdIds: structureChildren(doc).filter(obj => beforeOrder.indexOf(String(obj.id)) < 0).map(obj => String(obj.id)), idMap: { ...idMap }, affectedOriginalIds: affected() });
+    let result: any;
+    try {
+        result = editComponentMetadata(doc, doc.content, params, read, true, () => {
+            // 原生插入会按位置自动命中已有逻辑组；占位对象放在所有现有边界之外，载入快照前明确解除分组。
+            const point = new UnityEngine.Vector2(Math.min(0, ...original.map(obj => Number(obj.xMin === undefined ? obj.x : obj.xMin) - Math.abs(obj.width * (obj.scaleX || 1)))) - 10,
+                Math.min(0, ...original.map(obj => Number(obj.yMin === undefined ? obj.y : obj.yMin) - Math.abs(obj.height * (obj.scaleY || 1)))) - 10);
+            for (const source of sources) {
+                const obj = doc.InsertObject(source.obj.resourceURL || String(source.obj.objectType), point, -1);
+                if (!obj || !obj.id || beforeOrder.indexOf(String(obj.id)) >= 0 || allocated.some(entry => String(entry.obj.id) === String(obj.id))) throw new Error("Editor 未分配唯一的新对象 ID");
+                obj.groupId = "";
+                idMap[source.id] = String(obj.id); allocated.push({ source, obj });
+            }
+            const Xml = (CS as any).FairyGUI.Utils.XML;
+            for (const entry of allocated) {
+                const xml = entry.source.xml; xml.SetAttribute("id", idMap[entry.source.id]);
+                const group = String(xml.GetAttribute("group") || ""); if (idMap[group]) xml.SetAttribute("group", idMap[group]);
+                for (let i = 0; i < xml.elements.Count; i++) {
+                    const node = xml.elements.get_Item(i), target = String(node.GetAttribute("target") || "");
+                    if (String(node.name) === "relation" && idMap[target]) node.SetAttribute("target", idMap[target]);
+                }
+                const hydration = new Xml(String(xml.ToXMLString(false)));
+                // 载入坐标与样式时不让组布局/Relation 根据未完成的占位对象计算；所有载体就绪后再绑定。
+                hydration.RemoveAttribute("group"); hydration.RemoveChildren("relation");
+                entry.obj.Read_beforeAdd(hydration, null); entry.obj.Read_afterAdd(hydration, null);
+            }
+            allocated.forEach(entry => entry.obj.groupId = String(entry.source.xml.GetAttribute("group") || ""));
+            allocated.forEach(entry => entry.obj.relations.Read(entry.source.xml, false));
+            for (const entry of allocated) {
+                for (const controller of controllerList(doc)) entry.obj.HandleControllerChanged(controller);
+            }
+            // 分组边界采用延迟刷新；同步刷新所有组，避免把中间缓存的边界当成原对象被修改或保存错误。
+            const groups = structureChildren(doc).filter(obj => String(obj.objectType).toLowerCase() === "group");
+            const depth = (obj: any): number => { let n = 0; while (obj && obj.groupId) { n++; obj = groups.find(group => String(group.id) === String(obj.groupId)); } return n; };
+            groups.sort((a, b) => depth(b) - depth(a)).forEach(group => group.UpdateImmdediately());
+            for (const entry of allocated) if (!valuesEqual(gearXmlData(entry.source.xml), gearXmlData(entry.obj.Write())))
+                throw new Error(`复制后的原生快照与源配置不一致：${entry.source.id}`);
+            if (!valuesEqual(metadata, structureMetadata(doc))) throw new Error("复制改变了根设置、控制器、Transition 或自定义属性定义");
+            if (plan.policy === "reject" && originals.some(entry => !valuesEqual(entry.xml, gearXmlData(resolveObject(doc, { id: entry.id }).Write()))))
+                throw new Error("复制影响了原有对象配置");
+            Object.keys(plan.refs).forEach(id => aliases[plan.refs[id]] = idMap[id]);
+        });
+    } catch (error) {
+        error.details = { ...error.details, ...read(), beforeOrder, afterOrder: childOrder(doc).order, aliases, rollbackAttempted: false,
+            originalDifferences: originals.map(entry => ({ id: entry.id, before: entry.xml, after: gearXmlData(resolveObject(doc, { id: entry.id }).Write()) }))
+                .filter(entry => !valuesEqual(entry.before, entry.after)).slice(0, 20) };
+        throw error;
+    }
+    return { ...result, documentUrl: String(doc.content.resourceURL), revision: documentRevision(doc), idMap, aliases,
+        created: allocated.map(entry => ({ sourceId: entry.source.id, id: String(entry.obj.id), name: String(entry.obj.name), type: String(entry.obj.objectType), index: doc.content.GetChildIndex(entry.obj) })),
+        requestedIds: plan.requested, expandedSourceIds: sources.map(source => source.id), externalReferences: plan.external,
+        affectedOriginalIds: affected(),
+        beforeOrder, afterOrder: childOrder(doc).order, clipboardTouched: false,
+        note: "仅复制父文档对象配置，不复制共享资源文件；根控制器/Transition/遮罩/导出属性映射保留原引用，不自动指向克隆。失败保留实际创建结果，无完整结构撤销。" };
+}
+
 const OBJECT_QUERY_FIELDS = ["x", "y", "width", "height", "scaleX", "scaleY", "pivotX", "pivotY", "anchor", "rotation", "alpha", "visible", "touchable", "opaque", "grayed", "enabled", "text", "icon", "font", "fontSize", "autoSize", "groupId"];
 
 function getObjects(params: any): any {
@@ -4703,6 +4908,7 @@ function getObjects(params: any): any {
 }
 
 const BATCH_FIELDS: { [action: string]: string[] } = {
+    duplicate_objects: ["targets", "offset", "namingPolicy", "names", "externalReferences", "refs"], reorder_objects: ["orderedIds"],
     create_object: ["objectType", "name", "x", "y", "width", "height", "insertIndex", "groupMemberIds"],
     insert_object: ["url", "name", "x", "y", "insertIndex"],
     set_properties: ["target", "properties"], set_text_style: ["target", "style"],
@@ -4740,6 +4946,16 @@ function batchReference(value: any, aliases: any): any {
 function batchParams(params: any, aliases: any): any {
     const value = JSON.parse(JSON.stringify(params));
     if (value.target && value.target.id) value.target.id = batchReference(value.target.id, aliases);
+    if (Array.isArray(value.targets)) value.targets.forEach(target => { if (target && target.id) target.id = batchReference(target.id, aliases); });
+    if (Array.isArray(value.orderedIds)) value.orderedIds = value.orderedIds.map(id => batchReference(id, aliases));
+    for (const key of ["names", "refs"]) if (value[key] && typeof value[key] === "object" && !Array.isArray(value[key])) {
+        const mapped: any = Object.create(null);
+        Object.keys(value[key]).forEach(id => {
+            const resolved = batchReference(id, aliases);
+            if (Object.prototype.hasOwnProperty.call(mapped, resolved)) throw new Error(`${key} 中多个源引用解析为同一对象`);
+            mapped[resolved] = value[key][id];
+        }); value[key] = mapped;
+    }
     for (const key of ["groupId", "relationTargetId"]) if (value[key] !== undefined) value[key] = batchReference(value[key], aliases);
     if (Array.isArray(value.groupMemberIds)) value.groupMemberIds = value.groupMemberIds.map(id => batchReference(id, aliases));
     return value;
@@ -4760,6 +4976,24 @@ function validateBatch(params: any, doc: any): void {
         const creates = op.action === "create_object" || op.action === "insert_object";
         if (op.ref !== undefined && (!creates || typeof op.ref !== "string" || !/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(op.ref) || Object.prototype.hasOwnProperty.call(aliases, op.ref)))
             throw new Error(`第 ${index} 项 ref 无效或重复`);
+        if (op.action === "duplicate_objects") {
+            if (!Array.isArray(value.targets) || !value.targets.length || value.targets.length > 200) throw new Error("复制 targets 必须包含 1..200 项");
+            value.targets.forEach(target => {
+                validateBatchTarget(target);
+                if (target.id && target.id.startsWith("$")) batchReference(target.id, aliases);
+                else requireOwnedEditingTarget(doc, resolveObject(doc, target), false);
+            });
+            const refs = duplicateAliases(value.refs);
+            for (const key of Object.keys(refs)) {
+                if (key.startsWith("$")) batchReference(key, aliases);
+                if (Object.prototype.hasOwnProperty.call(aliases, refs[key])) throw new Error("复制 refs 别名与前序操作重复");
+            }
+        }
+        if (op.action === "reorder_objects") {
+            if (!Array.isArray(value.orderedIds) || value.orderedIds.some(id => typeof id !== "string" || !id) || new Set(value.orderedIds).size !== value.orderedIds.length)
+                throw new Error("orderedIds 必须为唯一 ID/别名数组");
+            value.orderedIds.forEach(id => { if (id.startsWith("$")) batchReference(id, aliases); });
+        }
         if (BATCH_FIELDS[op.action].indexOf("target") >= 0) {
             validateBatchTarget(value.target);
             const id = value.target.id;
@@ -4786,6 +5020,7 @@ function validateBatch(params: any, doc: any): void {
             names.add(value.name);
         }
         if (op.ref !== undefined) aliases[op.ref] = true;
+        if (op.action === "duplicate_objects") Object.keys(value.refs || {}).forEach(id => aliases[value.refs[id]] = true);
     });
 }
 
@@ -4848,6 +5083,7 @@ function applyBatch(params: any, request: AgentRequest): any {
                 if (!id) throw new Error("原生创建未返回对象 ID");
                 receipt.aliases[operation.ref] = String(id);
             }
+            if (operation.action === "duplicate_objects") Object.keys(result.aliases).forEach(alias => receipt.aliases[alias] = result.aliases[alias]);
             receipt.results.push({ index, action: operation.action, ref: operation.ref, result });
             writeJsonAtomic(path, receipt);
         });
@@ -4973,6 +5209,7 @@ function handleCommand(request: AgentRequest): any {
         remove_component_property: true, set_controller_properties: true,
         set_scroll_settings: true, set_group: true, set_group_settings: true, set_input_settings: true, set_mask_settings: true,
         get_group_settings: true, get_input_settings: true, get_mask_settings: true, add_relation: true, remove_relation: true, set_loader: true,
+        duplicate_objects: true, get_child_order: true, reorder_objects: true,
         get_button_settings: true, set_button_settings: true, get_button_state_resources: true, set_button_state_resources: true,
         get_graph_settings: true, set_graph_settings: true, get_image_display: true, set_image_display: true, get_filter_settings: true, set_filter_settings: true,
         set_text_style: true, replace_object_resource: true,
@@ -5009,6 +5246,9 @@ function handleCommand(request: AgentRequest): any {
 
     switch (action) {
         case "get_objects": return getObjects(params);
+        case "get_child_order": assertKnownKeys(params, [], "params"); return childOrder(getActiveDocument());
+        case "reorder_objects": assertKnownKeys(params, ["orderedIds", "save"], "params"); return reorderObjects(params);
+        case "duplicate_objects": assertKnownKeys(params, ["targets", "offset", "namingPolicy", "names", "externalReferences", "refs", "save"], "params"); return duplicateObjects(params);
         case "get_component_instance": return getComponentInstance(params);
         case "set_component_instance_controller": return setComponentInstanceController(params);
         case "set_component_instance_property": return setComponentInstanceProperty(params);

@@ -341,6 +341,19 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--insert-index", type=int)
     native.add_argument("--group-member-ids", help="JSON 对象 ID 数组；保存分组时必填")
     native.add_argument("--save", action="store_true")
+    subparsers.add_parser("get-child-order", help="读取完整直属对象顺序、ID 和分组")
+    order = subparsers.add_parser("reorder-objects", help="按完整 JSON ID 清单重排直属对象")
+    order.add_argument("ordered_ids")
+    order.add_argument("--save", action="store_true")
+    duplicate = subparsers.add_parser("duplicate-objects", help="复制直属对象或组，不经过系统剪贴板")
+    duplicate.add_argument("targets", help="JSON 定位数组，每项仅 id/path/name")
+    duplicate.add_argument("--offset-x", type=float, default=0)
+    duplicate.add_argument("--offset-y", type=float, default=0)
+    duplicate.add_argument("--naming-policy", choices=("auto_rename", "error"), default="auto_rename")
+    duplicate.add_argument("--external-references", choices=("reject", "preserve"), default="reject")
+    duplicate.add_argument("--names", help="JSON 源 ID 到新名称")
+    duplicate.add_argument("--refs", help="JSON 源 ID 到返回别名")
+    duplicate.add_argument("--save", action="store_true")
     for command in ("get-button-settings", "set-button-settings", "get-button-state-resources", "set-button-state-resources"):
         p = subparsers.add_parser(command, help="按钮定义/实例设置或当前定义的六态图；省略目标为当前定义")
         if command.endswith("settings"):
@@ -722,6 +735,16 @@ def main() -> int:
         elif args.command == "get-text-style":
             action = "get_text_style"
             params = {"target": target_from_args(args)}
+        elif args.command in ("get-child-order", "reorder-objects", "duplicate-objects"):
+            action = args.command.replace("-", "_")
+            params = {}
+            if args.command == "reorder-objects":
+                params = {"orderedIds": load_json_value(args.ordered_ids), "save": args.save}
+            elif args.command == "duplicate-objects":
+                params = {"targets": load_json_value(args.targets), "offset": {"x": args.offset_x, "y": args.offset_y}, "namingPolicy": args.naming_policy,
+                          "externalReferences": args.external_references, "save": args.save}
+                if args.names is not None: params['names'] = load_json_value(args.names)
+                if args.refs is not None: params['refs'] = load_json_value(args.refs)
         elif args.command in ("get-button-settings", "set-button-settings", "get-button-state-resources", "set-button-state-resources"):
             action = args.command.replace("-", "_")
             params = {}
