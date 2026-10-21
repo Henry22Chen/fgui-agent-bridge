@@ -1,0 +1,1 @@
+<packageDescription id="treepr00"><resources><component id="root" name="Root.xml" path="/" exported="true"/><component id="cell" name="Cell.xml" path="/" exported="true"/><component id="nested" name="Nested.xml" path="/" exported="true"/><image id="icon" name="Icon.png" path="/" exported="true"/></resources></packageDescription>

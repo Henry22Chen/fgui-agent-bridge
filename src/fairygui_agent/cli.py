@@ -366,7 +366,8 @@ def build_parser() -> argparse.ArgumentParser:
         if command not in ("get-mask-settings", "set-mask-settings", "get-container-settings", "set-container-settings"):
             _add_target_arguments(p)
         if command.startswith("set-"):
-            help_text = "JSON：defaultItem、最终有序 items（sourceIndex 保留原项；可改 url/标题/图标/properties）" if command == "set-list-item-resources" else "分组 ID（空串解除）或 JSON 设置"
+            help_text = "JSON：defaultItem、最终有序 items（sourceIndex 保留原项；可改 url/标题/图标/properties/树 level）" if command == "set-list-item-resources" else "分组 ID（空串解除）或 JSON 设置"
+            if command == "set-list-settings": help_text = "JSON 列表布局/选择与树设置：selectionController、treeViewEnabled、indent、clickToExpand 等"
             p.add_argument("group_id" if command == "set-group" else "settings", help=help_text)
         if command in ("add-relation", "remove-relation"):
             p.add_argument("relation_type")

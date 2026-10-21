@@ -1,0 +1,6 @@
+<component size="340,44" extention="Label"><controller name="expanded" pages="0,Closed,1,Open" selected="1"/><controller name="leaf" pages="0,Folder,1,Leaf" selected="0"/><controller name="Style" exported="true" pages="a,Normal,b,Highlighted" selected="0"/><displayList>
+<graph id="bg" name="bg" xy="0,0" size="340,44" type="rect" lineSize="0" fillColor="#ff7c3aed"><relation target="" sidePair="width-width"/></graph>
+<graph id="indent" name="indent" xy="0,0" size="0,44"/>
+<text id="arrow" name="arrow" xy="4,5" size="24,32" fontSize="22" color="#fffacc15" autoSize="none" text="v"><gearDisplay controller="leaf" pages="0"/><gearText controller="expanded" pages="0" values=">" default="v"/><relation target="indent" sidePair="left-right"/></text>
+<text id="title" name="title" xy="30,7" size="300,30" fontSize="20" color="#ffffff" autoSize="none" text="Default"><relation target="indent" sidePair="left-right"/></text>
+</displayList><Label/><customProperty target="title" propertyId="0" label="Caption"/></component>

@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.17.0";
+const BRIDGE_VERSION = "0.18.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -1412,7 +1412,7 @@ function writeStatus() {
             "apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit",
             "get_component_instance", "set_component_instance_controller", "set_component_instance_property", "get_component_properties",
             "upsert_component_property", "remove_component_property", "set_controller_properties",
-            "get_container_settings", "set_container_settings", "scroll_settings_extended",
+            "get_container_settings", "set_container_settings", "scroll_settings_extended", "list_settings_advanced", "list_item_levels",
             "get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
             "get_list_settings", "set_list_settings", "get_list_item_resources", "set_list_item_resources", "get_scroll_settings", "set_scroll_settings", "get_group", "set_group",
             "get_group_settings", "set_group_settings", "get_input_settings", "set_input_settings", "get_mask_settings", "set_mask_settings",
@@ -4559,13 +4559,80 @@ function setFilterSettings(params) {
     });
 }
 const LIST_SETTING_SPEC = { layout: ["column", "row", "flow_hz", "flow_vt", "pagination"], repeatX: "int", repeatY: "int", lineGap: "number", columnGap: "number",
-    align: ["left", "center", "right"], vAlign: ["top", "middle", "bottom"], autoResizeItem: "boolean", selectionMode: ["single", "multiple", "multipleSingleClick", "none"], clearOnPublish: "boolean" };
+    align: ["left", "center", "right"], vAlign: ["top", "middle", "bottom"], autoResizeItem: "boolean", selectionMode: ["single", "multiple", "multipleSingleClick", "none"], clearOnPublish: "boolean",
+    selectionController: "string", foldInvisibleItems: "boolean", scrollItemToViewOnClick: "boolean", treeViewEnabled: "boolean", indent: "int", clickToExpand: [0, 1, 2] };
+const LIST_ADVANCED_FIELDS = ["selectionController", "foldInvisibleItems", "scrollItemToViewOnClick", "treeViewEnabled", "indent", "clickToExpand"];
 const GROUP_SETTING_SPEC = { advanced: "boolean", layout: ["none", "hz", "vt"], lineGap: "number", columnGap: "number",
     excludeInvisibles: "boolean", autoSizeDisabled: "boolean", hasMainGrid: "boolean", mainGridIndex: "int" };
 const INPUT_SETTING_SPEC = { promptText: "string", maxLength: "int", restrict: "string", password: "boolean", keyboardType: "int" };
 const LOADER_SETTING_SPEC = { fill: ["none", "scale", "scaleMatchHeight", "scaleMatchWidth", "scaleFree", "scaleNoBorder"], align: ["left", "center", "right"],
     vAlign: ["top", "middle", "bottom"], autoSize: "boolean", shrinkOnly: "boolean", useResize: "boolean" };
 const LIST_ITEM_TEXT_FIELDS = ["name", "title", "icon", "selectedTitle", "selectedIcon"];
+/** Editor 用前序 level 推断文件夹，没有独立的空文件夹/展开持久化字段；发布层级是 byte。读取非法旧数据时给出诊断，仍允许调用方查看并修复。 */
+function listHierarchy(items, treeEnabled, includeNodes = true) {
+    const nodes = [], errors = [], parents = [];
+    let previous = -1;
+    for (let index = 0; index < items.Count; index++) {
+        const level = Number(items.get_Item(index).level);
+        let message = "";
+        if (!Number.isInteger(level) || level < 0 || level > 255)
+            message = "level 必须是 0..255 的整数";
+        else if (!treeEnabled && level !== 0)
+            message = "普通列表不能持久化非零 level；请先明确展平层级";
+        else if (treeEnabled && index === 0 && level !== 0)
+            message = "首项 level 必须为 0";
+        else if (treeEnabled && level > previous + 1)
+            message = "level 不能跳过尚不存在的父层";
+        if (message && errors.length < 20)
+            errors.push({ index, level, message });
+        const parentIndex = treeEnabled && level > 0 && parents[level - 1] !== undefined ? parents[level - 1] : null;
+        if (includeNodes && treeEnabled)
+            nodes.push({ index, level, parentIndex, isFolder: index + 1 < items.Count && Number(items.get_Item(index + 1).level) > level });
+        if (Number.isInteger(level) && level >= 0 && level <= 255) {
+            parents.length = level;
+            parents[level] = index;
+        }
+        previous = level;
+    }
+    return { enabled: treeEnabled, valid: !errors.length, ...(includeNodes ? { nodes } : {}), itemCount: items.Count, errors, levelBase: 0, maxLevel: 255,
+        nativeDefaultFolderExpanded: true, expandedStateFieldAvailable: false,
+        note: "文件夹由紧随其后的更深 level 推断；没有空文件夹标志。原生文件夹默认展开；没有独立的持久化 expanded 字段。单元资源的 expanded 控制器覆盖仍属预置项属性，不等同于保存 Editor 树节点展开状态。" };
+}
+function requireListHierarchy(items, treeEnabled) {
+    const hierarchy = listHierarchy(items, treeEnabled, false);
+    if (!hierarchy.valid)
+        verificationError("invalid_tree_hierarchy", "预置项层级不能可靠持久化；请提交合法的最终前序清单", { tree: hierarchy });
+}
+/** 树模式切换前检查层级，后核对预置项/覆盖与分页绑定；不得让原生普通列表序列化静默丢弃层级。 */
+function setListSettings(params) {
+    const doc = getActiveDocument(), obj = editingTarget(params, ["list"]), patch = checkedSettings(params.settings, LIST_SETTING_SPEC);
+    if (patch.indent !== undefined)
+        patch.indent = containerInteger(patch.indent, "indent");
+    if (patch.selectionController)
+        resolveController(doc, patch.selectionController);
+    const before = readSimpleSettings(obj, LIST_SETTING_SPEC), desired = { ...before, ...patch }, beforeItems = listItemResources(obj);
+    requireListHierarchy(obj.items, Boolean(desired.treeViewEnabled));
+    if (!desired.treeViewEnabled && (patch.indent !== undefined || patch.clickToExpand !== undefined))
+        throw new Error("indent/clickToExpand 需要先或同时开启 treeViewEnabled，否则原生不会保存这些字段");
+    const pageBinding = () => ({ pageController: obj.pageController || "", scrollBarFlags: obj.scrollBarFlags || 0 });
+    const beforePage = pageBinding();
+    const result = editComponentMetadata(doc, obj, params, () => readSimpleSettings(obj, LIST_SETTING_SPEC), !valuesEqual(before, desired), () => {
+        // 开关会重建原生树；其它属性在其后写入，确保最终补丁不受重建次序影响。
+        if (patch.treeViewEnabled !== undefined && patch.treeViewEnabled !== before.treeViewEnabled)
+            obj.treeViewEnabled = patch.treeViewEnabled;
+        for (const key of Object.keys(patch))
+            if (key !== "treeViewEnabled" && !valuesEqual(patch[key], before[key]))
+                obj[key === "vAlign" ? "verticalAlign" : key] = patch[key];
+        // foldInvisibleItems 是原生字段，不能仅改字段后等待下一次布局碰巧刷新。
+        obj.SetBoundsChangedFlag();
+        obj.EnsureBoundsCorrect();
+        obj.UpdateDisplayList(true);
+        if (!valuesEqual(readSimpleSettings(obj, LIST_SETTING_SPEC), desired) || !valuesEqual(listItemResources(obj), beforeItems) || !valuesEqual(pageBinding(), beforePage))
+            throw new Error("Editor 未接受全部列表设置，或意外改变预置项/覆盖/分页绑定");
+    });
+    return { ...result, tree: listHierarchy(obj.items, Boolean(obj.treeViewEnabled), false), inactiveTreeFields: obj.treeViewEnabled ? [] : ["indent", "clickToExpand"],
+        note: "仅编辑当前文档直属 List；切回普通列表前须显式将全部 level 设为 0。普通模式不持久化 indent/clickToExpand；不修改运行时展开或列表业务。保存核对整个组件，无完整撤销。" };
+}
 /** 保留空 URL 的继承语义；有效资源单独返回，不能把继承展开后写回预置项。 */
 function listItemResources(obj, items = obj.items, defaultItem = obj.defaultItem || "") {
     const result = [];
@@ -4615,12 +4682,17 @@ function setListItemResources(params) {
         const entry = entries[i];
         if (!entry || typeof entry !== "object" || Array.isArray(entry))
             throw new Error(`items[${i}] 必须是对象`);
-        assertKnownKeys(entry, ["sourceIndex", "url", ...LIST_ITEM_TEXT_FIELDS, "properties"], `items[${i}]`);
+        assertKnownKeys(entry, ["sourceIndex", "url", ...LIST_ITEM_TEXT_FIELDS, "properties", "level"], `items[${i}]`);
         const data = new FairyEditor.ListItemData();
         if (entry.sourceIndex !== undefined) {
             if (!Number.isInteger(entry.sourceIndex) || entry.sourceIndex < 0 || entry.sourceIndex >= oldItems.Count)
                 throw new Error(`items[${i}].sourceIndex 超出原列表范围`);
             data.CopyFrom(oldItems.get_Item(entry.sourceIndex));
+        }
+        if (entry.level !== undefined) {
+            data.level = containerInteger(entry.level, `items[${i}].level`);
+            if (data.level > 255)
+                throw new Error("level 不能超过发布格式的 byte 上限 255");
         }
         if (entry.url !== undefined)
             data.url = listItemResourceUrl(entry.url, `items[${i}].url`);
@@ -4660,12 +4732,14 @@ function setListItemResources(params) {
         }
         nextItems.Add(data);
     }
+    requireListHierarchy(nextItems, Boolean(obj.treeViewEnabled));
     const desired = listItemResources(obj, nextItems, defaultItem);
-    return editObjectSettings(doc, obj, params, () => listItemResources(obj), desired, () => {
+    const result = editObjectSettings(doc, obj, params, () => listItemResources(obj), desired, () => {
         obj.defaultItem = defaultItem;
         // FList.items 的原生 setter 重建舞台子项；仅改 ListItemData 字段不会可靠刷新 Editor 视图。
         obj.items = nextItems;
     });
+    return { ...result, tree: listHierarchy(obj.items, Boolean(obj.treeViewEnabled)) };
 }
 function readSimpleSettings(obj, spec) {
     const out = {};
@@ -5773,15 +5847,21 @@ function handleCommand(request) {
         }
         case "set_button_binding": return setButtonBinding(params);
         case "get_list_settings": {
+            assertKnownKeys(params, ["target"], "params");
             const obj = editingTarget(params, ["list"]);
-            return { target: targetSummary(obj, params.target), settings: readSimpleSettings(obj, LIST_SETTING_SPEC) };
+            return { target: targetSummary(obj, params.target), settings: readSimpleSettings(obj, LIST_SETTING_SPEC), tree: listHierarchy(obj.items, Boolean(obj.treeViewEnabled), false) };
         }
-        case "set_list_settings": return setSimpleSettings(params, "list", LIST_SETTING_SPEC);
+        case "set_list_settings":
+            assertKnownKeys(params, ["target", "settings", "save"], "params");
+            return setListSettings(params);
         case "get_list_item_resources": {
+            assertKnownKeys(params, ["target"], "params");
             const obj = editingTarget(params, ["list"]);
-            return { target: targetSummary(obj, params.target), settings: listItemResources(obj) };
+            return { target: targetSummary(obj, params.target), settings: listItemResources(obj), tree: listHierarchy(obj.items, Boolean(obj.treeViewEnabled)) };
         }
-        case "set_list_item_resources": return setListItemResources(params);
+        case "set_list_item_resources":
+            assertKnownKeys(params, ["target", "settings", "save"], "params");
+            return setListItemResources(params);
         case "get_container_settings": {
             assertKnownKeys(params, [], "params");
             const doc = getActiveDocument();

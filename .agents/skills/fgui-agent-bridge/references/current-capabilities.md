@@ -4,7 +4,7 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.17.0`（Git 标签 `v0.17.0`）
+- Bridge 版本：`0.18.0`（Git 标签 `v0.18.0`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
@@ -52,8 +52,8 @@
 | `fgui_get_button_settings` / `fgui_set_button_settings` | 可选直属 target；省略为当前按钮定义；settings, save=false | 定义 mode/音效/按压与实例内容/样式覆盖；详见[按钮编辑](button-settings.md) |
 | `fgui_get_button_state_resources` / `fgui_set_button_state_resources` | 当前按钮定义；六态 settings 补丁, save=false | 解析稳定 pageId 与显示/Icon Gear，明确清空；复杂结构拒绝 |
 | `fgui_get_button_binding` / `fgui_set_button_binding` | target；修改 `settings`, save=false | `controllerName`、`pageId`、`selected`；空控制器名清除绑定 |
-| `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | `layout`、`repeatX/repeatY`、`lineGap/columnGap`、`align/vAlign`、`autoResizeItem`、`selectionMode`、`clearOnPublish`（发布清空，不删除编辑器预置项） |
-| `fgui_get_list_item_resources` / `fgui_set_list_item_resources` | target；修改 `settings={defaultItem?,items?}`, save=false | 默认项资源与预置项增删重排、资源/名称/标题/图标/属性覆盖；`sourceIndex` 保留原项，items 完整替换，详见[列表项编辑](list-items.md) |
+| `fgui_get_list_settings` / `fgui_set_list_settings` | target；修改 `settings`, save=false | 既有布局/选择/发布清空；新增 selectionController、foldInvisibleItems、scrollItemToViewOnClick、treeViewEnabled、indent、clickToExpand，详见[列表与树编辑](list-items.md) |
+| `fgui_get_list_item_resources` / `fgui_set_list_item_resources` | target；修改 `settings={defaultItem?,items?}`, save=false | 默认项/预置项增删重排与覆盖；sourceIndex 保留原项，items.level 支持树前序层级，getter 的 tree.nodes 解释父子/文件夹，详见[列表与树编辑](list-items.md) |
 | `fgui_get_container_settings` / `fgui_set_container_settings` | 当前根，无 target；修改 settings, save=false | margin、min/max Width/Height、hitTestSourceId；尺寸与视口回读，见[容器与滚动](container-scroll.md) |
 | `fgui_get_scroll_settings` / `fgui_set_scroll_settings` | target；修改 `settings`, save=false | 根或原生 List：原有 overflow/scroll/分页 flags；新增 scrollBarMargin、clipSoftness、hz/vtScrollBarRes、headerRes/footerRes，见[容器与滚动](container-scroll.md) |
 | `fgui_get_group_settings` / `fgui_set_group_settings` | target；修改 settings, save=false | 分组 advanced、布局和主格设置，详见[Editor 设置](editor-settings.md) |
@@ -146,7 +146,7 @@
 - 计划与交接：`get-objects`、`apply-batch PLAN.json`、`get-batch-result`、`capture-states`、`begin-external-edit`、`finish-external-edit`、`diagnostics`。批量计划字段使用 Bridge camelCase，全局 --timeout 仍在命令前。
 - 属性与验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`set-properties`、`verify-document`、`capture-document`
 - 原生布局：`create-object`、`get-image-settings/set-image-settings`、`get-button-binding/set-button-binding`、`get-list-settings/set-list-settings`、`get-scroll-settings/set-scroll-settings`、`get-loader/set-loader`、`get-group/set-group`、`get-relations/add-relation/remove-relation`
-- 列表项：`get-list-item-resources`、`set-list-item-resources SETTINGS_JSON`；`--id/--path/--name` 定位直属 List，写入支持 `--save`。
+- 列表与树：`get/set-list-settings`、`get-list-item-resources`、`set-list-item-resources SETTINGS_JSON`；沿用 JSON 支持高级设置和 level，`--id/--path/--name` 定位直属 List，写入支持 `--save`。
 - 状态编辑：`controllers`、`create-controller`、`add-controller-page`、`rename-controller-page`、`set-controller-page`、`get-gears`、`set-gear`、`get-controller-actions`、`upsert-controller-action`、`remove-controller-action`
 - 预览：`preview-transition`、`preview-movieclip`
 - 保存发布：`save`、`discard`、`save-all`、`history`、`undo`、`redo`、`publish-settings`、`publish`

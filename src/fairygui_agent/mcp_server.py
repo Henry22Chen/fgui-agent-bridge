@@ -982,19 +982,23 @@ def fgui_set_button_binding(settings: dict[str, Any], object_id: str | None = No
 
 @mcp.tool()
 def fgui_get_list_settings(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
-    """读取原生 List 布局、行列数、间距、对齐和选择模式。"""
+    """读取直属 List 布局/选择设置；0.18.0 插件还返回选择控制器、折叠不可见项、点击滚入视野、树开关/缩进/展开方式，以及 tree 父子结构诊断。"""
     return _editing_call("get_list_settings", object_id, object_path, object_name)
 
 
 @mcp.tool()
 def fgui_set_list_settings(settings: dict[str, Any], object_id: str | None = None, object_path: str | None = None, object_name: str | None = None, save: bool = False) -> dict[str, Any]:
-    """设置 List 的 layout、repeatX/repeatY、lineGap/columnGap、align/vAlign、autoResizeItem、selectionMode、clearOnPublish。发布清空不删除编辑器预置项；默认不保存。"""
+    """设置直属 List 的 layout、repeatX/repeatY、lineGap/columnGap、align/vAlign、autoResizeItem、selectionMode、clearOnPublish。
+
+    0.18.0 新增 selectionController（父文档控制器名称，空串解除）、foldInvisibleItems、scrollItemToViewOnClick、treeViewEnabled、indent（非负整数）、clickToExpand（0不自动/1单击/2双击）。
+    树专用字段需开启树模式；关闭树前先用 items 将全部 level 显式设为0，避免原生序列化丢失层级。不设置逐项默认展开状态，不改分页控制器和共享资源。默认不保存，save=true 保存整个当前组件。
+    """
     return _editing_call("set_list_settings", object_id, object_path, object_name, settings=settings, save=save)
 
 
 @mcp.tool()
 def fgui_get_list_item_resources(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
-    """读取直属 List 的 defaultItem、预置项资源/有效资源、名称/标题/图标及内部属性和控制器覆盖；不修改文档。"""
+    """读取直属 List 的 defaultItem、预置项资源/有效资源、名称/标题/图标、level及内部覆盖；0.18.0 插件附带只读 tree 节点 parentIndex/isFolder 和非法层级诊断。不修改文档。"""
     return _editing_call("get_list_item_resources", object_id, object_path, object_name)
 
 
@@ -1004,6 +1008,7 @@ def fgui_set_list_item_resources(settings: dict[str, Any], object_id: str | None
 
     项字段：url（空串继承默认项）、name/title/icon/selectedTitle/selectedIcon（空串清空）、properties（完整替换覆盖数组，省略则保留）。
     property 格式为 {target, propertyId, value}，ID=-1/0/1 对应控制器/文本/图标；value 为字符串。资源必须是工程内组件 ui:// URL。
+    0.18.0 的 items 支持 level=0..255 整数：树项按前序，首项为0，相邻只能加深一级；普通列表只允许0。sourceIndex仍引用调用前清单，复制时省略level/覆盖值保持；父项由顺序推断，没有独立空文件夹或expanded字段。
     默认不保存；save=true 保存整个当前组件并核对 XML。没有完整 Agent 撤销；失败不自动回滚。
     """
     return _editing_call("set_list_item_resources", object_id, object_path, object_name, settings=settings, save=save)

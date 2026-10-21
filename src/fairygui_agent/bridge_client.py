@@ -79,6 +79,7 @@ EDITOR_SETTING_CAPABILITIES = frozenset({"get_group_settings", "set_group_settin
 STRUCTURE_CAPABILITIES = frozenset({"duplicate_objects", "get_child_order", "reorder_objects"})
 CONTAINER_CAPABILITIES = frozenset({"get_container_settings", "set_container_settings"})
 SCROLL_EXTENDED_FIELDS = frozenset({"scrollBarMargin", "clipSoftness", "hzScrollBarRes", "vtScrollBarRes", "headerRes", "footerRes"})
+LIST_ADVANCED_FIELDS = frozenset({"selectionController", "foldInvisibleItems", "scrollItemToViewOnClick", "treeViewEnabled", "indent", "clickToExpand"})
 BUTTON_CAPABILITIES = frozenset({"get_button_settings", "set_button_settings", "get_button_state_resources", "set_button_state_resources"})
 VISUAL_CAPABILITIES = frozenset({"get_graph_settings", "set_graph_settings", "get_image_display", "set_image_display", "get_filter_settings", "set_filter_settings"})
 
@@ -253,6 +254,21 @@ class BridgeClient:
         requested = {action}
         if action == "apply_batch" and isinstance((params or {}).get("operations"), list):
             requested.update(op.get("action") for op in params["operations"] if isinstance(op, dict) and isinstance(op.get("action"), str))
+        list_operations = (params or {}).get("operations", []) if action == "apply_batch" else [{"action": action, "params": params or {}}]
+        list_required: set[str] = set()
+        for op in list_operations:
+            if not isinstance(op, dict) or not isinstance(op.get("params"), dict):
+                continue
+            settings = op['params'].get('settings')
+            if not isinstance(settings, dict):
+                continue
+            if op.get('action') == 'set_list_settings' and LIST_ADVANCED_FIELDS & settings.keys():
+                list_required.add('list_settings_advanced')
+            if op.get('action') == 'set_list_item_resources' and isinstance(settings.get('items'), list) and any(isinstance(item, dict) and 'level' in item for item in settings['items']):
+                list_required.add('list_item_levels')
+        missing = list_required - set(status.get('capabilities', []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少列表/树层级能力：{', '.join(sorted(missing))}，请同步并重新加载 0.18.0 或更高版本插件。")
         container_required = requested & CONTAINER_CAPABILITIES
         scroll_operations = (params or {}).get("operations", []) if action == "apply_batch" else [{"action": action, "params": params or {}}]
         for op in scroll_operations:

@@ -1,0 +1,10 @@
+{
+  "path": "published",
+  "fileExtension": "bytes",
+  "packageCount": 2,
+  "compressDesc": true,
+  "binaryFormat": false,
+  "codeGeneration": {
+    "allowGenCode": false
+  }
+}

@@ -1,0 +1,7 @@
+<component size="820,520"><controller name="Selection" pages="s0,A,s1,B,s2,C,s3,D" selected="0"/><controller name="Pages" pages="p0,First,p1,Second" selected="0"/><displayList>
+<text id="plainTitle" name="plainTitle" xy="20,12" size="360,36" fontSize="24" color="#ffffff" autoSize="none" text="普通列表"/>
+<text id="treeTitle" name="treeTitle" xy="430,12" size="360,36" fontSize="24" color="#ffffff" autoSize="none" text="树列表"/>
+<list id="plain" name="plain" xy="20,60" size="360,390" overflow="scroll" defaultItem="ui://treepr00cell"><item title="Alpha"/><item title="Beta"/><item title="Gamma"/></list>
+<list id="tree" name="tree" xy="430,60" size="360,390" overflow="scroll" defaultItem="ui://treepr00cell" treeView="true" indent="18" clickToExpand="1"><item level="0" title="Folder A"/><item level="1" title="Child A"/><item level="1" title="Child B"/><item level="0" title="Standalone"/></list>
+<component id="nested" name="nested" src="nested" fileName="Nested.xml" xy="20,470"/>
+</displayList></component>

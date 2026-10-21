@@ -27,7 +27,7 @@ function setup() {
         node('group', 'group', { advanced: false, layout: 'none', lineGap: 0, columnGap: 0, excludeInvisibles: false, autoSizeDisabled: false,
             hasMainGrid: false, mainGridIndex: 0, mainGridMinSize: 0, children: new List([{}, {}]), UpdateImmdediately() {} }),
         node('input', 'inputtext', { promptText: '', maxLength: 0, restrict: '', password: false, keyboardType: 0, text: 'retain' }),
-        node('list', 'list', { clearOnPublish: false, items: new List([{}]) }),
+        node('list', 'list', { clearOnPublish: false, items: new List([{level: 0, properties: new List()}]), SetBoundsChangedFlag() {}, EnsureBoundsCorrect() {}, UpdateDisplayList() {} }),
         node('mask', 'graph', {}),
         node('instance', 'component', { resourceURL: 'ui://old', x: 12, y: 34, width: 80, height: 90, pivotX: 0.5, pivotY: 0.5, anchor: true,
             scaleX: 2, scaleY: 1, rotation: 15, alpha: 0.7, visible: true, touchable: true, grayed: false, groupId: 'group',
