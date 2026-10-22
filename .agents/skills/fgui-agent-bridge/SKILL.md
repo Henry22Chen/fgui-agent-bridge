@@ -129,15 +129,15 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 脚本会先校验所选目录，再写入目标工程的 `plugins/agent-bridge/`；无效目录或取消选择时不得写入。自动化环境可改用 `--project PATH --apply`。
 
-首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.19.1` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
+首次安装先读取业务项目的固定版本约定；安装询问必须包含源仓库与发布标签。下面以当前发布 `v0.20.0` 为例；项目明确指定其他标签时替换为该标签。前述同步命令均在 Bridge 仓库目录执行：
 
 ```bash
-git clone --branch v0.19.1 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.20.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
 
-已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.19.1`、`git switch --detach v0.19.1` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
+已有安装先核对 `git status --short` 并保留未提交改动，再执行 `git fetch origin tag v0.20.0`、`git switch --detach v0.20.0` 和 `uv sync --frozen`；固定标签处于 detached HEAD 属于正常状态。同步后必须分别核对 MCP 和插件等于项目指定版本，不能仅以两端 `versionMatch=true` 判断版本正确。保留业务规范中已有的固定版本约定，不能用通用规范覆盖。
 
 Codex 安装采用两层配置，完整示例见源仓库 README 的安装指南：
 
@@ -217,7 +217,7 @@ git diff --check
 ## 安全边界
 
 - `.agent/` 是目标 FairyGUI 工程的运行时队列与日志，不纳入 Git。
-- `0.19.1` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
+- `0.20.0` 使用协议 `2.0` 和按进程隔离的队列；升级后重新加载插件并重启 MCP 会话，旧协议不能继续使用。Windows 只有在没有 FairyGUI 进程时才自动首次启动，已有其他工程或身份无法确认时需手动打开目标工程。
 - 同一请求不要重复写入；响应必须按请求 ID 匹配。
 - 插件会拒绝执行超过 60 秒未被认领的过期请求，并在 Bridge 初始化时清理残留队列文件；客户端命令超时不代表操作未执行，重试前先检查状态（如 `fgui_status` / `fgui_get_active_document`），避免写操作重复执行。
 - 图片、声音、MovieClip 图片序列导入和发布是磁盘写入，执行前确认目标和冲突策略。Transition 声明式/关键帧修改与已有 MovieClip 更新/替换可由 Agent undo/redo 回退；全新资源创建、声音/图片导入和删除不能。
@@ -226,7 +226,7 @@ git diff --check
 - 文本样式修改支持类型与枚举检查，暂不支持自动 external reload。
 - 新原生节点、批量属性、按钮绑定、List/ScrollPane、二维 Loader、分组与 Relations 不提供完整 Agent 撤销，实际修改清除旧历史并保持 dirty。无变化且不保存时保留历史；拒绝的输入不会作为成功写入。不要将控件配置验证等同于运行预览点击、滚动或业务逻辑联调。
 - `verify_document` 可传入 `target + expected` 执行磁盘 XML 持久化比对，失败响应保留结构化 `error.details`（包含 `stage`、expected、actual、differences）。
-- Loader3D、Controller、Gear 和联动默认不保存，实际修改清空旧 Agent 历史，无完整撤销；`save=true` 保存整个组件并回读 XML，写入失败按实际响应报告，不假装已回滚。Controller 页面/控制器删除仍未开放。
+- Loader3D、Controller、Gear 和联动默认不保存，实际修改清空旧 Agent 历史，无完整撤销；`save=true` 保存整个组件并回读 XML，写入失败按实际响应报告，不假装已回滚。控制器改名/删除、页面删除/重排前先 get_controller_references；默认拒绝引用，local 只处理本地已验证引用，未知/外部范围拒绝写入。首页及联动顺序/跟随模式见[控制器生命周期](references/controller-lifecycle.md)。
 - 组件实例属性、组件定义映射和控制器导出设置也没有完整 Agent 撤销。定义仅编辑当前根组件；实例仅改父文档覆盖，保存时比对完整原生 XML。移除定义不扫描或清理其他文档已有覆盖；同一实例设置可能受内部 Gear/联动影响，失败保留实际修改。
 - SpineFixer 仅支持已验证的 Spine 4.2 二进制；绑定资源或插入 Spine 默认修复尺寸、锚点和 PMA 并保存所属包，独立于组件 `save=false`，不能由文档 undo/discard 回退。可显式 `fix_spine=false`；查询、截图和仅调整播放属性不修复。
 - 不允许删除根组件；不要把 `discard`、`undo` 和 `save` 混为同一语义。

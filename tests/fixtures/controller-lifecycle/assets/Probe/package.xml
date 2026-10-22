@@ -1,0 +1,1 @@
+<packageDescription id="ctrltest"><resources><component id="root" name="Root.xml" path="/" exported="true"/><component id="external" name="External.xml" path="/" exported="true"/><component id="switch" name="Switch.xml" path="/" exported="true"/><component id="combo" name="Combo.xml" path="/" exported="true"/></resources></packageDescription>

@@ -202,6 +202,21 @@ def build_parser() -> argparse.ArgumentParser:
     preview_movieclip_parser.add_argument("--frame", type=int)
 
     subparsers.add_parser("active", help="读取当前文档")
+    for command in ("get-controller-references", "rename-controller", "remove-controller", "remove-controller-page", "reorder-controller-pages", "reorder-controller-actions"):
+        lifecycle = subparsers.add_parser(command, help="控制器生命周期；先读引用影响，默认拒绝引用/不保存")
+        lifecycle.add_argument("controller_name")
+        if command == "rename-controller":
+            lifecycle.add_argument("name")
+        if command in ("get-controller-references", "remove-controller-page"):
+            lifecycle.add_argument("--page-id", required=command == "remove-controller-page")
+        if command == "remove-controller-page":
+            lifecycle.add_argument("--replacement-page-id")
+        if command in ("rename-controller", "remove-controller", "remove-controller-page"):
+            lifecycle.add_argument("--reference-policy", choices=("reject", "local"), default="reject")
+        if command.startswith("reorder-"):
+            lifecycle.add_argument("order", help="最终完整顺序 JSON 数组；页面 ID 或原联动索引")
+        if command != "get-controller-references":
+            lifecycle.add_argument("--save", action="store_true")
     subparsers.add_parser("controllers", help="读取当前文档控制器、页面和当前页")
     for command in ("get-controller-actions", "upsert-controller-action", "remove-controller-action"):
         action_parser = subparsers.add_parser(command, help="读取/编辑控制器联动，默认不保存")
@@ -226,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     controller_create.add_argument("--pages", nargs="*", default=[], help="初始页面名称，省略创建空控制器")
     controller_create.add_argument("--save", action="store_true")
     for command in ("add-controller-page", "rename-controller-page", "set-controller-page"):
-        controller_parser = subparsers.add_parser(command, help="编辑控制器页面，默认不保存；不支持删除")
+        controller_parser = subparsers.add_parser(command, help="编辑控制器页面，默认不保存")
         controller_parser.add_argument("controller_name")
         if command != "set-controller-page":
             controller_parser.add_argument("name", help="新页面名称")
@@ -692,6 +707,16 @@ def main() -> int:
                 params["label"] = args.label
             if args.command == "set-controller-properties":
                 params["settings"] = load_json_value(args.settings)
+        elif args.command in ("get-controller-references", "rename-controller", "remove-controller", "remove-controller-page", "reorder-controller-pages", "reorder-controller-actions"):
+            action = args.command.replace("-", "_")
+            params = {"controllerName": args.controller_name}
+            if args.command != "get-controller-references":
+                params["save"] = args.save
+            for key, attr in (("name", "name"), ("pageId", "page_id"), ("replacementPageId", "replacement_page_id"), ("referencePolicy", "reference_policy")):
+                if getattr(args, attr, None) is not None:
+                    params[key] = getattr(args, attr)
+            if args.command.startswith("reorder-"):
+                params["orderedPageIds" if args.command.endswith("pages") else "orderedIndices"] = load_json_value(args.order)
         elif args.command == "controllers":
             action = "get_controllers"
         elif args.command in ("get-controller-actions", "upsert-controller-action", "remove-controller-action"):

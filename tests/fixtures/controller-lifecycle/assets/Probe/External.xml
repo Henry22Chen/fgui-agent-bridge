@@ -1,0 +1,1 @@
+<component size="500,300"><displayList><component id="instance" name="instance" src="root" fileName="Root.xml" xy="0,0" controller="Exported,e1"/><list id="presets" name="presets" xy="0,0" size="500,300" defaultItem="ui://ctrltestroot"><item controllers="Exported,e1"/></list></displayList></component>

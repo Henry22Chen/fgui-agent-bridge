@@ -67,6 +67,8 @@ ANIMATION_CAPABILITIES = frozenset(
 
 SPINE_CAPABILITIES = frozenset({"get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor"})
 CONTROLLER_CAPABILITIES = frozenset({"get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"})
+CONTROLLER_LIFECYCLE_CAPABILITIES = frozenset({'rename_controller', 'reorder_controller_actions', 'reorder_controller_pages', 'remove_controller_page', 'remove_controller', 'get_controller_references'})
+CONTROLLER_HOME_FIELDS = frozenset({"homePageType", "homePage", "autoRadioGroupDepth"})
 GEAR_CAPABILITIES = frozenset({"get_gears", "set_gear"})
 CONTROLLER_ACTION_CAPABILITIES = frozenset({"get_controller_actions", "upsert_controller_action", "remove_controller_action"})
 EDITING_CAPABILITIES = frozenset({"get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
@@ -256,6 +258,18 @@ class BridgeClient:
         if action == "apply_batch" and isinstance((params or {}).get("operations"), list):
             requested.update(op.get("action") for op in params["operations"] if isinstance(op, dict) and isinstance(op.get("action"), str))
         list_operations = (params or {}).get("operations", []) if action == "apply_batch" else [{"action": action, "params": params or {}}]
+        lifecycle_required = requested & CONTROLLER_LIFECYCLE_CAPABILITIES
+        for op in list_operations:
+            if not isinstance(op, dict) or not isinstance(op.get("params"), dict):
+                continue
+            fields = op["params"]
+            if op.get("action") == "set_controller_properties" and isinstance(fields.get("settings"), dict) and CONTROLLER_HOME_FIELDS & fields["settings"].keys():
+                lifecycle_required.add("controller_home_settings")
+            if op.get("action") == "upsert_controller_action" and isinstance(fields.get("action"), dict) and "targetMode" in fields["action"]:
+                lifecycle_required.add("controller_action_follow")
+        missing = lifecycle_required - set(status.get("capabilities", []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少控制器生命周期能力：{', '.join(sorted(missing))}，请同步并重新加载 0.20.0 或更高版本插件。")
         list_required: set[str] = set()
         for op in list_operations:
             if not isinstance(op, dict) or not isinstance(op.get("params"), dict):

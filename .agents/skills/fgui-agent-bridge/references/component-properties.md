@@ -2,6 +2,8 @@
 
 本能力需要 Bridge/插件 0.11.0。实例配置与源组件定义分开处理，不能用修改共享定义的方式替代单实例覆盖。
 
+0.20.0 另扩展首页规则、autoRadioGroupDepth、控制器/页面生命周期及引用预览，见[控制器生命周期](controller-lifecycle.md)；本页保留实例覆盖与导出定义的约定。
+
 ## 实例配置
 
 父文档中选定直属组件实例，用 `fgui_get_component_instance(object_id=...)` 读取：

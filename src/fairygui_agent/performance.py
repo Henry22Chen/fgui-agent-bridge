@@ -14,6 +14,16 @@ from .capture import MAX_BYTES, capture_result
 
 
 BATCH_FIELDS = {
+    'rename_controller': {'referencePolicy', 'name', 'controllerName'},
+    'remove_controller': {'referencePolicy', 'controllerName'},
+    'remove_controller_page': {'replacementPageId', 'referencePolicy', 'controllerName', 'pageId'},
+    'reorder_controller_pages': {'orderedPageIds', 'controllerName'},
+    'reorder_controller_actions': {'controllerName', 'orderedIndices'},
+    'add_controller_page': {'name', 'controllerName'},
+    'rename_controller_page': {'name', 'controllerName', 'pageIndex', 'pageId', 'pageName'},
+    'upsert_controller_action': {'action', 'controllerName', 'actionIndex'},
+    'remove_controller_action': {'controllerName', 'actionIndex'},
+
     "set_container_settings": {"settings"},
     "duplicate_objects": {"targets", "offset", "namingPolicy", "names", "externalReferences", "refs"},
     "reorder_objects": {"orderedIds"},

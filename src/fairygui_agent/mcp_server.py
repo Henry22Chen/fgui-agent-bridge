@@ -12,7 +12,7 @@ from mcp.types import CallToolResult, TextContent
 
 from . import __version__
 from .animation_models import TransitionDefinition, TransitionItem
-from .bridge_client import BridgeClient
+from .bridge_client import BridgeClient, BridgeCommandError
 from .editor_launcher import EditorLauncher
 from .project_locator import ProjectLocator
 from .capture import capture_result, manual_verification
@@ -529,6 +529,15 @@ def fgui_set_gear(gear_type: str, controller_name: str, default_value: Any = Non
     return _client.call("set_gear", params)
 
 
+def _controller_call(action: str, params: dict[str, Any]) -> Any:
+    """保留生命周期拒绝的结构化影响清单，MCP 通用异常文本会丢失 code/details。"""
+    try:
+        return _client.call(action, params)
+    except BridgeCommandError as error:
+        value = {"code": error.code, "message": error.bridge_message, "details": error.details}
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(value, ensure_ascii=False))], structuredContent=value, isError=True)
+
+
 @mcp.tool()
 def fgui_get_controller_actions(controller_name: str) -> dict[str, Any]:
     """读取根控制器联动执行顺序，以及当前/直属子组件的控制器页面 ID 与当前状态；索引从 0 开始。"""
@@ -541,15 +550,15 @@ def fgui_upsert_controller_action(controller_name: str, action: dict[str, Any], 
     """追加联动，或按 action_index 完整替换一个联动；其它联动保留。配置编辑不触发执行。
 
     action 通用字段：type、fromPageIds、toPageIds；页面条件省略/空数组匹配任意页，使用源控制器稳定 ID。
-    type=change_page：objectId（空串/省略表示当前组件，否则直属子组件 ID）、controllerName、targetPageId。
+    type=change_page：objectId（空串/省略表示当前组件，否则直属子组件 ID）、controllerName、targetPageId；可选 targetMode=page_id（默认）/follow_index/follow_name，跟随模式不得提供 targetPageId。
     type=play_transition：transitionName、repeat（默认 1，-1 循环）、delay（默认 0 秒）、stopOnExit（默认 false）。
-    不支持跟随索引/名称等特殊目标页面；拒绝自引用/循环。增删后重新读取索引。
+    跟随模式用有名 targetMode；拒绝直接传特殊字符串、自引用/循环。增删后重新读取索引。
     默认不保存、不支持 Agent undo；save=true 保存整个父组件并校验联动 XML，不写子组件资源。
     """
     params: dict[str, Any] = {"controllerName": controller_name, "action": action, "save": save}
     if action_index is not None:
         params["actionIndex"] = action_index
-    return _client.call("upsert_controller_action", params)
+    return _controller_call("upsert_controller_action", params)
 
 
 @mcp.tool()
@@ -562,6 +571,49 @@ def fgui_remove_controller_action(controller_name: str, action_index: int, save:
 def fgui_get_controllers() -> dict[str, Any]:
     """读取当前文档根组件的控制器、页面 ID/名称/索引和当前页；嵌套组件需先打开所属文档。"""
     return _client.call("get_controllers")
+
+
+@mcp.tool()
+def fgui_get_controller_references(controller_name: str, page_id: str | None = None) -> dict[str, Any]:
+    """只读扫描全部包组件与打开文档的 Gear、绑定、联动、首页和外部实例引用。complete=false 时不得删改；page_id 可过滤页面影响。"""
+    params: dict[str, Any] = {"controllerName": controller_name}
+    if page_id is not None:
+        params["pageId"] = page_id
+    return _client.call("get_controller_references", params)
+
+
+@mcp.tool()
+def fgui_rename_controller(controller_name: str, name: str, reference_policy: Literal["reject", "local"] = "reject", save: bool = False) -> dict[str, Any]:
+    """重命名根控制器。默认拒绝引用；local 同步已验证本地引用，外部实例/未知范围写前拒绝并返回 impact。"""
+    return _controller_call("rename_controller", {"controllerName": controller_name, "name": name, "referencePolicy": reference_policy, "save": save})
+
+
+@mcp.tool()
+def fgui_remove_controller(controller_name: str, reference_policy: Literal["reject", "local"] = "reject", save: bool = False) -> dict[str, Any]:
+    """删除根控制器。local 明确删除引用的完整 Gear/联动并解绑按钮/List/Scroll；不自动修改外部文档，不提供 force。"""
+    return _controller_call("remove_controller", {"controllerName": controller_name, "referencePolicy": reference_policy, "save": save})
+
+
+@mcp.tool()
+def fgui_remove_controller_page(controller_name: str, page_id: str, reference_policy: Literal["reject", "local"] = "reject",
+                                replacement_page_id: str | None = None, save: bool = False) -> dict[str, Any]:
+    """删除页面，保留其它页面 ID；最后一页拒绝。删除首页/当前页须 replacement_page_id；首页转为 specific。local 清理完整相关 Gear/联动及绑定。"""
+    params: dict[str, Any] = {"controllerName": controller_name, "pageId": page_id, "referencePolicy": reference_policy, "save": save}
+    if replacement_page_id is not None:
+        params["replacementPageId"] = replacement_page_id
+    return _controller_call("remove_controller_page", params)
+
+
+@mcp.tool()
+def fgui_reorder_controller_pages(controller_name: str, ordered_page_ids: list[str], save: bool = False) -> dict[str, Any]:
+    """按全部稳定页面 ID 的最终顺序重排；保留当前选中 ID，不触发联动。default 首页随首项、follow_index 随新索引；specific 首页 ID 不变。"""
+    return _controller_call("reorder_controller_pages", {"controllerName": controller_name, "orderedPageIds": ordered_page_ids, "save": save})
+
+
+@mcp.tool()
+def fgui_reorder_controller_actions(controller_name: str, ordered_indices: list[int], save: bool = False) -> dict[str, Any]:
+    """按调用前全部联动索引的最终顺序重排；保留原生对象和未知类型，不执行联动；完成后重新读取索引。"""
+    return _controller_call("reorder_controller_actions", {"controllerName": controller_name, "orderedIndices": ordered_indices, "save": save})
 
 
 @mcp.tool()
@@ -649,8 +701,8 @@ def fgui_remove_component_property(child_path: str, property_id: Literal[0, 1], 
 
 @mcp.tool()
 def fgui_set_controller_properties(controller_name: str, settings: dict[str, Any], save: bool = False) -> dict[str, Any]:
-    """设置当前根控制器的 exported（导出为组件属性）和 alias（备注名）；保留页面、选中页和联动。默认不保存，无完整 Agent undo。"""
-    return _client.call("set_controller_properties", {"controllerName": controller_name, "settings": settings, "save": save})
+    """设置根控制器 exported/alias/autoRadioGroupDepth/homePageType/homePage。首页类型 default/specific/branch/variable；specific 使用页面 ID，variable 使用变量名，default/branch 清空 homePage；保留当前预览页。默认不保存。"""
+    return _controller_call("set_controller_properties", {"controllerName": controller_name, "settings": settings, "save": save})
 
 
 @mcp.tool()

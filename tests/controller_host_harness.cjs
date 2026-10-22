@@ -79,8 +79,8 @@ test('save failures never claim persistence or rollback',()=>{
 test('linked action failure or redirect reports mutation, preserves dirty, no pretend rollback',()=>{
     create();for(const mode of ['throw','redirect']){selectionMode=mode;assert.throws(()=>edit('set_controller_page',{pageIndex:1}),e=>e.code==='editor_rejected'&&e.details.mutationMayHaveOccurred&&!e.details.rollbackAttempted);assert.equal(doc.isModified,true);}
 });
-test('publish and async loader block editing, deletion remains unavailable',()=>{
+test('publish and async loader block editing, lifecycle validates required controller',()=>{
     vm.runInContext('publishInProgress=true',ctx);assert.throws(()=>create());vm.runInContext('publishInProgress=false;loader3dBusy=true',ctx);assert.throws(()=>create(),e=>e.code==='document_busy');
-    vm.runInContext('loader3dBusy=false',ctx);assert.throws(()=>call('remove_controller_page'),/未知 action/);assert.throws(()=>call('remove_controller'),/未知 action/);
+    vm.runInContext('loader3dBusy=false',ctx);assert.throws(()=>call('remove_controller_page'),e=>e.code==='invalid_argument');assert.throws(()=>call('remove_controller'),e=>e.code==='invalid_argument');
 });
 let failed=0;for(const [name,run] of tests){try{setup();run();console.log('PASS',name);}catch(e){failed++;console.error('FAIL',name,e);}}if(failed)process.exitCode=1;

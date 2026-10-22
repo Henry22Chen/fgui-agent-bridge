@@ -2,11 +2,11 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.19.1`
+- **版本**：`0.20.0`
 - **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
-- **MCP 工具数**：116；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
+- **MCP 工具数**：122；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
 
 > **说明**：Bridge 仓库与业务 FairyGUI 工程分开存放。FairyGUI 工程只需安装轻量插件；在宿主 IDE 中可按需安装 Skill 提高 AI 操作准确率。
 
@@ -61,7 +61,9 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 
 安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
-当前发布版本为 `0.19.1`，对应 Git 标签 `v0.19.1`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+当前发布版本为 `0.20.0`，对应 Git 标签 `v0.20.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+
+`0.20.0` 新增控制器引用预览、重命名/删除、页面删除/重排、联动重排六个工具，扩展首页与有名跟随模式，共 122 个 MCP 工具；协议仍为 `2.0`。保留稳定页面 ID，写前拒绝外部/未知引用，显式 local 策略同步改名或清理本地引用。详见[控制器生命周期](.agents/skills/fgui-agent-bridge/references/controller-lifecycle.md)。
 
 `0.19.1` 将编辑临时文件统一放在当前 FGUI 工程的 `.agent/tmp/<任务名>/`，该约定随固定标签和 Skill 一起安装；工具数仍为116，协议仍为 `2.0`。
 
@@ -77,7 +79,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
 源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
-安装版本：0.19.1，Git 标签 v0.19.1；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
+安装版本：0.20.0，Git 标签 v0.20.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
@@ -94,7 +96,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
-git clone --branch v0.19.1 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.20.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
@@ -102,8 +104,8 @@ uv sync --frozen
 检出标签后处于 detached HEAD 是固定版本安装的正常状态。已有 Bridge 安装先运行 `git status --short` 核对并保留未提交改动，再切换到项目指定的标签：
 
 ```bash
-git fetch origin tag v0.19.1
-git switch --detach v0.19.1
+git fetch origin tag v0.20.0
+git switch --detach v0.20.0
 uv sync --frozen
 ```
 
@@ -464,17 +466,17 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 
 | MCP 工具 | 参数与作用 |
 | --- | --- |
-| `fgui_get_controllers` | 读取当前文档根组件所有控制器，包含页面 ID/名称/索引、当前页及只读 homePage 信息 |
+| `fgui_get_controllers` | 读取当前文档根组件所有控制器，包含页面 ID/名称/索引、当前预览页、首页规则和 autoRadioGroupDepth |
 | `fgui_create_controller` | `name, page_names?, save=false`；缺省创建空控制器，指定页面时自动选中第一页 |
 | `fgui_add_controller_page` | `controller_name, name, save=false`；末尾追加，已有 ID 与顺序保留，空控制器的首个页面自动选中 |
 | `fgui_rename_controller_page` | `controller_name, name, page_id?/page_name?/page_index?, save=false`；只改名称，保留页面 ID |
 | `fgui_set_controller_page` | `controller_name, page_id?/page_name?/page_index?, save=false`；通过原生 setter 应用 Gear/联动 |
 
-页面定位三选一，优先使用稳定的 `page_id`；索引从 0 开始，重复名称拒绝按名称定位。新名称不允许空白、逗号或控制字符，同一控制器中新建页面名称不能重复。控制器名称必须唯一。嵌套组件需先打开所属文档，不开放删除控制器/页面或页面重排；Gear 和联动配置编辑见下节。
+页面定位三选一，优先使用稳定的 `page_id`；索引从 0 开始，重复名称拒绝按名称定位。新名称不允许空白、逗号或控制字符，同一控制器中新建页面名称不能重复。控制器名称必须唯一。嵌套组件需先打开所属文档；0.20.0 的删除、重排及引用处理见[控制器生命周期](.agents/skills/fgui-agent-bridge/references/controller-lifecycle.md)，Gear 和基础联动配置编辑见下节。
 
 默认只修改 Editor 内存；`save=true` 保存整个组件并回读实际 XML 中的控制器页面及 selected 字段。切换当前页不会修改运行时 `homePage`；Editor 重开文档可能按首页规则重选页面，不能将当前页保存当作运行时首页设置。实际改动清空旧 Agent undo/redo，不支持完整 Controller/Gear 联动撤销；未保存内容可通过 discard 放弃整个文档。无变化操作不清历史，但显式保存后清历史。写入或保存失败报告实际状态，不假装联动已回滚。
 
-CLI：`controllers`、`create-controller State --pages Idle Active --save`、`add-controller-page State Disabled`、`rename-controller-page State Enabled --page-id 1`、`set-controller-page State --page-index 1 --save`。全局 `--project` 放在子命令前。没有新增删除命令。
+CLI：`controllers`、`create-controller State --pages Idle Active --save`、`add-controller-page State Disabled`、`rename-controller-page State Enabled --page-id 1`、`set-controller-page State --page-index 1 --save`。全局 `--project` 放在子命令前。生命周期、首页和联动顺序接口见[控制器生命周期](.agents/skills/fgui-agent-bridge/references/controller-lifecycle.md)。
 
 自动回归入口见 `tests/test_controllers.py`。
 
@@ -521,12 +523,12 @@ CLI 示例：`set-gear text State '{"defaultValue":"其他","pageValues":[{"page
 `action` 使用以下 JSON 字段：
 
 - 公共：`type`、`fromPageIds`、`toPageIds`。两组页面条件都使用源控制器页面 ID，省略或空数组匹配任意页；两组条件同时满足才执行。
-- `type="change_page"`：`objectId`（空串/省略为当前组件，否则为直属子组件 ID）、`controllerName`、`targetPageId`。只支持显式稳定页面 ID，暂不支持跟随索引/名称等特殊值。拒绝自引用和会构成循环的控制器引用；按控制器引用图保守检查，不尝试证明页面条件能否阻断循环。
+- `type="change_page"`：`objectId`（空串/省略为当前组件，否则为直属子组件 ID）、`controllerName`、`targetPageId`。默认 targetMode="page_id" 使用显式稳定页面 ID；targetMode="follow_index"/"follow_name" 分别跟随源索引/名称，跟随模式不传 targetPageId。拒绝自引用和会构成循环的控制器引用；按控制器引用图保守检查，不尝试证明页面条件能否阻断循环。
 - `type="play_transition"`：`transitionName`（当前组件中已有 Transition）、`repeat`（默认 1，正整数或 -1 循环）、`delay`（默认 0，0..86400 秒）、`stopOnExit`（默认 false）。退出条件是后续切页不再匹配该 Action；由原生执行器决定停止行为。
 
 索引从 0 开始，不是稳定 ID；增删后重新读取，不复用旧索引。更新是单条完整替换，省略字段恢复默认；返回的 `index`/`xml` 是读取元数据，不放进 `action`。未知类型可以读取、保留或删除，不能通过 upsert 编辑。Action 执行顺序与列表顺序一致；修改配置本身不执行联动，也不停止已经播放的动画。
 
-默认仅修改当前根组件内存；`save=true` 保存整个父组件并回读 XML，校验联动内容和顺序。子组件只作为引用目标，不写其资源文件。实际修改清空旧 Agent 历史，不支持完整撤销；失败报告实际状态、保留修改，不自动回滚。删除页面和控制器仍不开放。
+默认仅修改当前根组件内存；`save=true` 保存整个父组件并回读 XML，校验联动内容和顺序。子组件只作为引用目标，不写其资源文件。实际修改清空旧 Agent 历史，不支持完整撤销；失败报告实际状态、保留修改，不自动回滚。控制器及页面生命周期接口见[控制器生命周期](.agents/skills/fgui-agent-bridge/references/controller-lifecycle.md)。
 
 **Editor 编辑模式与运行预览不同**：切页可应用控制器/Gear，但 Editor 6.1.4 的普通编辑模式不自动播放 Action 中的 Transition；原生运行预览才会播放。`fgui_preview_animation` 可独立检查动画，不能代替联动触发验收。在运行预览中验证主控制器切页、子组件状态、动画进入/退出；获取截图失败时要求人工验证，不回滚。
 

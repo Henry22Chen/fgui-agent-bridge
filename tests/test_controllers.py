@@ -31,7 +31,7 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     m.fgui_set_controller_page('State', **args)
 
-    def test_capabilities_and_no_deletion_surface(self):
+    def test_legacy_capabilities(self):
         plugin = (ROOT / 'plugin/main.ts').read_text(encoding='utf8')
         client = BridgeClient.__new__(BridgeClient)
         client.project_context = lambda: SimpleNamespace(queue_root=ROOT)
@@ -41,8 +41,8 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(hasattr(m, f'fgui_{action}'))
             with self.assertRaisesRegex(BridgeError, '0.8.6'):
                 client.call_raw(action)
-        self.assertFalse(hasattr(m, 'fgui_remove_controller_page'))
-        self.assertFalse(hasattr(m, 'fgui_remove_controller'))
+        self.assertTrue(hasattr(m, 'fgui_remove_controller_page'))
+        self.assertTrue(hasattr(m, 'fgui_remove_controller'))
 
     def test_cli(self):
         parser = build_parser()

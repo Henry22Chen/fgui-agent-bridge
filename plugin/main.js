@@ -11,7 +11,7 @@ const IOSearchOption = CS.System.IO.SearchOption;
 const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
-const BRIDGE_VERSION = "0.19.1";
+const BRIDGE_VERSION = "0.20.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -646,7 +646,7 @@ function controllerSnapshot(c) {
     const index = c.selectedIndex;
     return { name: String(c.name), pages, selectedIndex: index,
         selectedPageId: pages[index] ? pages[index].id : null, selectedPage: pages[index] ? pages[index].name : null,
-        homePageType: c.homePageType || "", homePage: c.homePage || "", exported: Boolean(c.exported), alias: String(c.alias || "") };
+        homePageType: c.homePageType || "", homePage: c.homePage || "", exported: Boolean(c.exported), alias: String(c.alias || ""), autoRadioGroupDepth: Boolean(c.autoRadioGroupDepth) };
 }
 function requireControllerName(value) {
     // 页面列表以逗号分隔保存；拒绝无法无损往返的名称，不替用户裁剪或改名。
@@ -974,9 +974,279 @@ function editComponentProperty(params, remove) {
             throw new Error("Editor 未接受组件自定义属性定义");
     });
 }
+/** 读取所有包的组件，活动/已打开文档优先采用原生快照，避免忽略未保存引用。任何读取失败都保留为未知范围。 */
+function controllerReferenceDocuments(doc) {
+    const documents = [], unknown = [], Xml = CS.FairyGUI.Utils.XML;
+    const packages = App.project.allPackages;
+    for (let i = 0; i < packages.Count; i++) {
+        const pkg = packages.get_Item(i);
+        if (!pkg.opened)
+            unknown.push({ packageId: String(pkg.id), reason: "包未打开，无法保证组件枚举完整" });
+        for (let j = 0; j < pkg.items.Count; j++) {
+            const item = pkg.items.get_Item(j);
+            if (item.type !== FairyEditor.FPackageItemType.COMPONENT)
+                continue;
+            const url = String(item.GetURL());
+            try {
+                const opened = App.docView.FindDocument(url);
+                const xml = new Xml(opened ? editorDocumentSnapshot(opened) : String(IOFile.ReadAllText(item.file)));
+                documents.push({ url, packageId: String(pkg.id), file: String(item.file), modified: Boolean(opened && opened.isModified),
+                    source: opened ? "editor" : "disk", node: gearXmlData(xml) });
+            }
+            catch (error) {
+                unknown.push({ documentUrl: url, file: String(item.file), reason: String(error) });
+            }
+        }
+    }
+    if (!documents.some(d => d.url === String(doc.content.resourceURL)))
+        unknown.push({ documentUrl: String(doc.content.resourceURL), reason: "当前组件未被包资源枚举覆盖" });
+    return { documents, unknown };
+}
+/** 只读、可复用的引用预览。外部实例依赖保守报告；未知字段/类型不能变成“无引用”。 */
+function scanControllerReferences(params) {
+    const doc = getActiveDocument(), c = resolveController(doc, params.controllerName), selected = params.pageId === undefined ? null : resolveControllerPage(c, { pageId: params.pageId });
+    const scan = controllerReferenceDocuments(doc), references = [], unknown = scan.unknown, name = String(c.name), own = String(doc.content.resourceURL);
+    const validIds = controllerSnapshot(c).pages.map(p => p.id);
+    if (!["default", "specific", "branch", "variable"].includes(String(c.homePageType)) || c.homePageType === "specific" && !validIds.includes(String(c.homePage)))
+        unknown.push({ documentUrl: own, reason: "首页规则未知或引用无效页面 ID" });
+    const add = (d, kind, path, extra = {}) => references.push({ documentUrl: d.url, file: d.file, modified: d.modified,
+        source: d.source, local: d.url === own, kind, path, ...extra });
+    const relevant = (ids) => !selected || ids.includes(selected.id);
+    for (const d of scan.documents) {
+        const instances = [];
+        const find = (n, path, defaultItem) => {
+            const a = n.attrs, url = a.src ? `ui://${a.pkg || d.packageId}${a.src}` : (a.url || (n.name === "item" ? defaultItem : ""));
+            if (url === own || a.defaultItem === own) {
+                if (a.id)
+                    instances.push(a.id);
+                if (c.exported)
+                    add(d, "instance_dependency", path, { objectId: a.id || "", resourceURL: own, exported: true });
+                // 原生组件实例用 controller，列表项用 controllers；二者不是同一 XML 字段。
+                const values = String(n.name === "item" ? a.controllers || "" : a.controller || "").split(",");
+                for (let i = 0; i < values.length; i += 2)
+                    if (values[i] === name && relevant([values[i + 1]]))
+                        add(d, "instance_override", path, { objectId: a.id || "", pageIds: [values[i + 1]] });
+                for (let i = 0; i < values.length; i += 2)
+                    if (values[i] === name && !validIds.includes(values[i + 1]))
+                        unknown.push({ documentUrl: d.url, path, reason: "实例覆盖引用无效页面 ID" });
+            }
+            n.children.forEach((v, i) => find(v, `${path}/${v.name}[${i}]`, a.defaultItem || ""));
+        };
+        find(d.node, "component", "");
+        const visit = (n, path, ownerId, controllerName, actionIndex) => {
+            const a = n.attrs, id = a.id || ownerId;
+            if (n.name === "controller")
+                controllerName = a.name;
+            const local = d.url === own;
+            if (local && n.name.startsWith("gear") && a.controller === name && relevant(String(a.pages || "").split(",")))
+                add(d, "gear", path, { objectId: ownerId, gear: n.name, pageIds: String(a.pages || "").split(",").filter(Boolean) });
+            if (local && n.name.startsWith("gear") && a.controller === name && String(a.pages || "").split(",").filter(Boolean).some(id => !validIds.includes(id)))
+                unknown.push({ documentUrl: d.url, path, reason: "Gear 引用无效页面 ID" });
+            if (n.name === "action") {
+                const source = local && controllerName === name;
+                const target = a.type === "change_page" && a.controller === name && ((local && !a.objectId) || instances.includes(a.objectId));
+                if (source && !["change_page", "play_transition"].includes(a.type))
+                    unknown.push({ documentUrl: d.url, path, reason: "未知联动类型" });
+                const filters = [...String(a.fromPage || "").split(","), ...String(a.toPage || "").split(",")].filter(Boolean);
+                if (source && filters.some(id => !validIds.includes(id)) || target && !["~1", "~2", ...validIds].includes(a.targetPage))
+                    unknown.push({ documentUrl: d.url, path, reason: "联动引用无效页面 ID 或未知跟随规则" });
+                if ((source && (!selected || filters.includes(selected.id))) || (target && (!selected || a.targetPage === selected.id || ["~1", "~2"].includes(a.targetPage))))
+                    add(d, "action", path, { controllerName, actionIndex, target, pageIds: filters, targetPage: a.targetPage || "" });
+            }
+            if (local && n.name === "controller" && a.name === name && a.homePageType === "specific" && relevant([a.homePage]))
+                add(d, "home_page", path, { pageIds: [a.homePage] });
+            // Button 的 controller/page 属于父文档；组件实例 controller CSV 属于被引用定义。
+            if (local && n.name === "Button" && a.controller === name && (!selected || a.page === selected.id))
+                add(d, "button_binding", path, { objectId: ownerId, pageIds: a.page ? [a.page] : [] });
+            if (local && n.name === "Button" && a.controller === name && !validIds.includes(a.page))
+                unknown.push({ documentUrl: d.url, path, reason: "按钮绑定引用无效页面 ID" });
+            for (const key of ["selectionController", "pageController"])
+                if (local && a[key] === name)
+                    add(d, key, path, { objectId: id });
+            for (const key of Object.keys(a))
+                if (local && /controller/i.test(key) && a[key] === name
+                    && !(["controller", "selectionController", "pageController"].includes(key)))
+                    unknown.push({ documentUrl: d.url, path, field: key, reason: "未识别的控制器引用字段" });
+            if (local && a.controller === name && !n.name.startsWith("gear") && !["action", "Button"].includes(n.name))
+                unknown.push({ documentUrl: d.url, path, reason: "未识别的 controller 引用" });
+            let nextAction = 0;
+            n.children.forEach((v, i) => visit(v, `${path}/${v.name}[${i}]`, id, controllerName, v.name === "action" ? nextAction++ : -1));
+        };
+        visit(d.node, "component", "", "", -1);
+    }
+    return { documentUrl: own, controller: controllerSnapshot(c), pageId: selected ? selected.id : null, references, unknown,
+        complete: unknown.length === 0, scannedDocuments: scan.documents.map(d => ({ documentUrl: d.url, file: d.file, modified: d.modified, source: d.source })),
+        note: "只读扫描全部包组件及打开文档快照；外部实例依赖保守列出，绝不自动跨文档写入。" };
+}
+/** 完整全序输入禁止遗漏、重复、额外值；重排沿用原生对象，不重建页面或联动。 */
+function controllerOrder(value, current, key) {
+    if (!Array.isArray(value) || value.length !== current.length || new Set(value).size !== current.length || value.some(v => !current.includes(v)))
+        verificationError("invalid_order", `${key} 必须为当前全部值的无重复最终顺序`, { current });
+    return value;
+}
+/** 局部清理只删完整被引用 Gear/Action、解绑按钮和选择/滚动控制器；不裁剪未知高级 Gear 字段。 */
+function applyControllerReferences(doc, c, references, rename, originalName) {
+    const actionGroups = Object.create(null), gears = Object.create(null);
+    for (const r of references) {
+        if (r.kind === "action") {
+            // 改名仅迁移指向它的目标名称；它自己的 from/to 条件仍绑定原页面 ID。
+            if (!rename || r.target)
+                (actionGroups[r.controllerName] || (actionGroups[r.controllerName] = new Set())).add(r.actionIndex);
+            continue;
+        }
+        if (r.kind === "home_page")
+            continue;
+        const obj = r.objectId ? resolveObject(doc, { id: r.objectId }) : doc.content;
+        if (r.kind === "gear") {
+            (gears[r.objectId] || (gears[r.objectId] = { obj, tags: new Set() })).tags.add(r.gear);
+        }
+        else if (r.kind === "button_binding") {
+            obj.extention.controller = rename || "";
+            if (!rename)
+                obj.extention.page = "";
+            if (String(obj.extention.controller || "") !== (rename || "") || !rename && obj.extention.page)
+                throw new Error("按钮引用迁移回读失败");
+        }
+        else if (r.kind === "selectionController") {
+            const target = String(obj.objectType).toLowerCase() === "list" ? obj : obj.extention;
+            target.selectionController = rename || "";
+            if (String(target.selectionController || "") !== (rename || ""))
+                throw new Error("选择控制器迁移回读失败");
+        }
+        else if (r.kind === "pageController") {
+            obj.pageController = rename || "";
+            if (String(obj.pageController || "") !== (rename || ""))
+                throw new Error("分页控制器迁移回读失败");
+        }
+    }
+    for (const key of Object.keys(gears)) {
+        const group = gears[key], xml = group.obj.WriteGears(), nodes = gearNodes(xml);
+        for (const n of nodes)
+            if (group.tags.has(String(n.name))) {
+                if (rename)
+                    n.SetAttribute("controller", rename);
+                else
+                    xml.RemoveChild(n);
+            }
+        const expected = gearNodes(xml).map(gearXmlData).sort((a, b) => a.name.localeCompare(b.name));
+        group.obj.ReadGears(xml);
+        const actual = gearNodes(group.obj.WriteGears()).map(gearXmlData).sort((a, b) => a.name.localeCompare(b.name));
+        if (!valuesEqual(expected, actual))
+            throw new Error("Gear 引用迁移改变了其它配置或回读不符");
+    }
+    for (const key of Object.keys(actionGroups)) {
+        const source = rename && key === originalName ? c : resolveController(doc, key), actions = controllerActionList(source);
+        Array.from(actionGroups[key]).sort((a, b) => b - a).forEach((index) => {
+            if (rename) {
+                actions[index].controllerName = rename;
+                if (String(actions[index].Write().GetAttribute("controller")) !== rename)
+                    throw new Error("联动引用迁移回读失败");
+            }
+            else {
+                source.RemoveAction(actions[index]);
+                if (controllerActionList(source).includes(actions[index]))
+                    throw new Error("联动清理回读失败");
+            }
+        });
+    }
+}
+/** 写前先完成项目范围影响分析；受限清理绝不忽略未知引用，也不改其他文档。 */
+function editControllerLifecycle(action, params) {
+    const fields = { rename_controller: ["name", "referencePolicy"], remove_controller: ["referencePolicy"],
+        remove_controller_page: ["pageId", "referencePolicy", "replacementPageId"], reorder_controller_pages: ["orderedPageIds"], reorder_controller_actions: ["orderedIndices"] };
+    assertKnownKeys(params, ["controllerName", "save", ...fields[action]], action);
+    const doc = getActiveDocument(), c = resolveController(doc, params.controllerName), before = controllerSnapshot(c);
+    const rename = action === "rename_controller", remove = action === "remove_controller", pageRemove = action === "remove_controller_page";
+    const orderActions = action === "reorder_controller_actions", orderPages = action === "reorder_controller_pages";
+    const name = rename ? requireControllerName(params.name) : null;
+    if (rename && controllerList(doc).some(v => v !== c && v.name === name))
+        verificationError("controller_exists", "控制器名称已存在", {});
+    const page = pageRemove ? resolveControllerPage(c, { pageId: params.pageId }) : null;
+    if (pageRemove && before.pages.length <= 1)
+        verificationError("last_page", "不能删除最后一页；可删除整个无引用控制器", {});
+    const replacement = params.replacementPageId === undefined ? null : resolveControllerPage(c, { pageId: params.replacementPageId });
+    if (replacement && (!pageRemove || replacement.id === page.id))
+        verificationError("invalid_argument", "replacementPageId 必须指向保留页面", {});
+    const isHome = pageRemove && (before.homePageType === "specific" ? before.homePage === page.id : before.homePageType === "default" && page.index === 0);
+    if (pageRemove && (isHome || before.selectedPageId === page.id) && !replacement)
+        verificationError(isHome ? "default_page" : "selected_page", "删除首页/当前页必须显式提供 replacementPageId", {});
+    const order = orderActions ? controllerOrder(params.orderedIndices, controllerActionList(c).map((_, i) => i), "orderedIndices")
+        : orderPages ? controllerOrder(params.orderedPageIds, before.pages.map(p => p.id), "orderedPageIds") : null;
+    const policy = params.referencePolicy === undefined ? "reject" : params.referencePolicy;
+    if (!["reject", "local"].includes(policy))
+        verificationError("invalid_argument", "referencePolicy 仅支持 reject/local", {});
+    const impact = orderActions ? null : scanControllerReferences({ controllerName: c.name, ...(pageRemove ? { pageId: page.id } : {}) });
+    let refs = impact ? impact.references.filter(r => r.kind !== "home_page" && !(r.kind === "action" && !r.target && (rename || remove && r.controllerName === c.name))) : [];
+    // 外部实例依赖对重命名/删除保守阻断；稳定 ID 重排无需迁移实例覆盖。
+    if (orderPages)
+        refs = [];
+    if (impact && impact.unknown.length)
+        verificationError("unknown_references", "引用扫描不完整，拒绝写入", { impact });
+    if (refs.some(r => !r.local))
+        verificationError("external_references", "存在外部组件实例/联动，需要跨文档迁移，拒绝本次写入", { impact });
+    if (refs.length && policy === "reject" && !(rename && name === c.name))
+        verificationError("controller_referenced", "存在引用；先检查影响预览，明确 referencePolicy=local 才同步改名/清理", { impact });
+    const actionBefore = orderActions ? controllerActionList(c).map(controllerActionSnapshot) : null;
+    const changed = rename ? name !== c.name : orderPages ? !valuesEqual(order, before.pages.map(p => p.id)) : orderActions ? order.some((v, i) => v !== i) : true;
+    const read = () => ({ controller: controllerList(doc).includes(c) ? controllerSnapshot(c) : null,
+        ...(orderActions ? { actions: controllerActionList(c).map(controllerActionSnapshot) } : {}) });
+    const result = editComponentMetadata(doc, doc.content, params, read, changed, () => {
+        if (rename)
+            c.name = name; // ReadGears 必须能在父组件中解析新名称。
+        if (rename || remove || pageRemove)
+            applyControllerReferences(doc, c, refs, rename ? name : null, before.name);
+        if (remove)
+            doc.content.RemoveController(c);
+        else if (pageRemove) {
+            if (isHome) {
+                c.homePageType = "specific";
+                c.homePage = replacement.id;
+            }
+            c.RemovePageAt(page.index);
+        }
+        else if (orderPages) {
+            order.forEach((id, index) => { const current = controllerSnapshot(c).pages.findIndex(p => p.id === id); if (current !== index)
+                c.SwapPage(index, current); });
+        }
+        else if (orderActions) {
+            const current = controllerActionList(c), desired = order.map(i => current[i]);
+            desired.forEach((value, index) => { const at = controllerActionList(c).indexOf(value); if (at !== index)
+                c.SwapAction(index, at); });
+        }
+        if (pageRemove || orderPages) {
+            const id = pageRemove && before.selectedPageId === page.id ? replacement.id : before.selectedPageId;
+            if (id !== null) {
+                const at = controllerSnapshot(c).pages.findIndex(p => p.id === id);
+                c.SetSelectedIndex(at);
+            }
+            // 静默恢复 ID 后只应用直属 Gear，配置编辑不触发联动或播放动画。
+            for (let i = 0; i < doc.content.numChildren; i++)
+                doc.content.GetChildAt(i).HandleControllerChanged(c);
+            const expected = (orderPages ? order.map(id => before.pages.find(p => p.id === id)) : before.pages.filter(p => p.id !== page.id)).map((p, index) => ({ ...p, index }));
+            if (!valuesEqual(controllerSnapshot(c).pages, expected) || controllerSnapshot(c).selectedPageId !== id)
+                throw new Error("原生页面 ID/选中页与预期不符");
+        }
+        if (rename && c.name !== name || remove && controllerList(doc).includes(c))
+            throw new Error("原生控制器修改回读不符");
+        if (orderActions && !valuesEqual(controllerActionList(c).map(a => gearXmlData(a.Write())), order.map(i => gearXmlData(new CS.FairyGUI.Utils.XML(actionBefore[i].xml)))))
+            throw new Error("联动重排回读不符");
+    });
+    return { ...result, impact, referencePolicy: policy };
+}
 function setControllerProperties(params) {
     const doc = getActiveDocument(), c = resolveController(doc, params.controllerName);
-    const patch = checkedSettings(params.settings, { exported: "boolean", alias: "string" }), before = controllerSnapshot(c);
+    const patch = checkedSettings(params.settings, { exported: "boolean", alias: "string", autoRadioGroupDepth: "boolean", homePageType: "string", homePage: "string" }), before = controllerSnapshot(c);
+    const desired = { ...before, ...patch };
+    if (!["default", "specific", "branch", "variable"].includes(desired.homePageType))
+        verificationError("invalid_home_page", "homePageType 仅支持 default/specific/branch/variable", {});
+    if (desired.homePageType === "specific")
+        resolveControllerPage(c, { pageId: desired.homePage });
+    else if (desired.homePageType === "variable")
+        requireControllerName(desired.homePage);
+    else if (patch.homePage && patch.homePage !== "")
+        verificationError("invalid_home_page", "default/branch 首页不接受 homePage", {});
+    if (["default", "branch"].includes(desired.homePageType) && (patch.homePageType !== undefined || patch.homePage !== undefined))
+        patch.homePage = "";
     const changed = Object.keys(patch).some(k => before[k] !== patch[k]);
     return editComponentMetadata(doc, doc.content, params, () => controllerSnapshot(c), changed, () => {
         for (const key of Object.keys(patch))
@@ -998,7 +1268,7 @@ function controllerActionSnapshot(action, index) {
     const result = { index, type: String(action.type), fromPageIds: attr("fromPage").split(",").filter(Boolean),
         toPageIds: attr("toPage").split(",").filter(Boolean), xml: String(xml.ToXMLString(false)) };
     if (result.type === "change_page")
-        Object.assign(result, { objectId: attr("objectId"), controllerName: attr("controller"), targetPageId: attr("targetPage") });
+        Object.assign(result, { objectId: attr("objectId"), controllerName: attr("controller"), targetPageId: ["~1", "~2"].includes(attr("targetPage")) ? null : attr("targetPage"), targetMode: attr("targetPage") === "~1" ? "follow_index" : attr("targetPage") === "~2" ? "follow_name" : "page_id" });
     if (result.type === "play_transition")
         Object.assign(result, { transitionName: attr("transition"), repeat: Number(action.repeat), delay: Number(action.delay), stopOnExit: Boolean(action.stopOnExit) });
     return result;
@@ -1019,7 +1289,7 @@ function getControllerActions(params) {
 function buildControllerAction(doc, c, value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         verificationError("invalid_argument", "action 必须是配置对象", {});
-    const common = ["type", "fromPageIds", "toPageIds"], change = ["objectId", "controllerName", "targetPageId"], play = ["transitionName", "repeat", "delay", "stopOnExit"];
+    const common = ["type", "fromPageIds", "toPageIds"], change = ["objectId", "controllerName", "targetPageId", "targetMode"], play = ["transitionName", "repeat", "delay", "stopOnExit"];
     if (!["change_page", "play_transition"].includes(value.type))
         verificationError("invalid_argument", "仅支持 change_page/play_transition", {});
     if (Object.keys(value).some(key => !common.concat(value.type === "change_page" ? change : play).includes(key)))
@@ -1049,7 +1319,13 @@ function buildControllerAction(doc, c, value) {
                 verificationError("invalid_target", "联动目标必须是当前组件或直属子组件", { objectId });
         }
         const target = resolveController({ content: component }, value.controllerName);
-        resolveControllerPage(target, { pageId: value.targetPageId });
+        const mode = value.targetMode === undefined ? "page_id" : value.targetMode;
+        if (!["page_id", "follow_index", "follow_name"].includes(mode) || (mode !== "page_id" && value.targetPageId !== undefined))
+            verificationError("invalid_argument", "targetMode 为 page_id/follow_index/follow_name；跟随模式不得提供 targetPageId", {});
+        if (mode === "page_id")
+            resolveControllerPage(target, { pageId: value.targetPageId });
+        // 原生特殊值经过 Editor 执行、保存与重载验证；公共协议使用有名模式。
+        const targetPage = mode === "follow_index" ? "~1" : mode === "follow_name" ? "~2" : value.targetPageId;
         // 原生 changing 标记可抑制部分递归，但循环仍会导致页结果依赖执行顺序；新增配置拒绝构成回环。
         const visited = [];
         const reachesSource = (current) => {
@@ -1069,7 +1345,7 @@ function buildControllerAction(doc, c, value) {
             verificationError("controller_cycle", "该联动会形成控制器自引用或循环", {});
         xml.SetAttribute("objectId", objectId);
         xml.SetAttribute("controller", value.controllerName);
-        xml.SetAttribute("targetPage", value.targetPageId);
+        xml.SetAttribute("targetPage", targetPage);
     }
     else {
         resolveTransition(doc, value.transitionName);
@@ -1408,6 +1684,7 @@ function writeStatus() {
             "verify_document", "replace_object_resource", "get_text_style", "set_text_style",
             "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor",
             "get_gears", "set_gear", "get_controller_actions", "upsert_controller_action", "remove_controller_action",
+            "controller_home_settings", "controller_action_follow", "get_controller_references", "rename_controller", "remove_controller", "remove_controller_page", "reorder_controller_pages", "reorder_controller_actions",
             "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page",
             "apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit",
             "get_component_instance", "set_component_instance_controller", "set_component_instance_property", "get_component_properties",
@@ -5539,6 +5816,15 @@ function getObjects(params) {
     return { documentUrl: doc.content.resourceURL, revision: documentRevision(doc), modified: Boolean(doc.isModified), objects };
 }
 const BATCH_FIELDS = {
+    rename_controller: ["controllerName", "name", "referencePolicy"],
+    remove_controller: ["controllerName", "referencePolicy"],
+    remove_controller_page: ["controllerName", "pageId", "referencePolicy", "replacementPageId"],
+    reorder_controller_pages: ["controllerName", "orderedPageIds"],
+    reorder_controller_actions: ["controllerName", "orderedIndices"],
+    add_controller_page: ["controllerName", "name"],
+    rename_controller_page: ["controllerName", "pageId", "pageName", "pageIndex", "name"],
+    upsert_controller_action: ["controllerName", "action", "actionIndex"],
+    remove_controller_action: ["controllerName", "actionIndex"],
     set_container_settings: ["settings"],
     duplicate_objects: ["targets", "offset", "namingPolicy", "names", "externalReferences", "refs"], reorder_objects: ["orderedIds"],
     create_object: ["objectType", "name", "x", "y", "width", "height", "insertIndex", "groupMemberIds"],
@@ -5918,7 +6204,7 @@ function handleCommand(request) {
         get_graph_settings: true, set_graph_settings: true, get_image_display: true, set_image_display: true, get_filter_settings: true, set_filter_settings: true,
         set_text_style: true, replace_object_resource: true,
         set_gear: true,
-        upsert_controller_action: true, remove_controller_action: true,
+        upsert_controller_action: true, remove_controller_action: true, get_controller_references: true, rename_controller: true, remove_controller: true, remove_controller_page: true, reorder_controller_pages: true, reorder_controller_actions: true,
         create_controller: true, add_controller_page: true, rename_controller_page: true, set_controller_page: true,
         get_loader3d: true, set_loader3d: true, capture_document: true, fix_spine_anchor: true,
         open_document: true,
@@ -6097,6 +6383,12 @@ function handleCommand(request) {
         case "upsert_controller_action":
         case "remove_controller_action": return editControllerAction(action, params);
         case "set_gear": return setGear(params);
+        case "get_controller_references": return scanControllerReferences(params);
+        case "rename_controller":
+        case "remove_controller":
+        case "remove_controller_page":
+        case "reorder_controller_pages":
+        case "reorder_controller_actions": return editControllerLifecycle(action, params);
         case "get_controllers": return { documentUrl: getActiveDocument().content.resourceURL, controllers: controllerList(getActiveDocument()).map(controllerSnapshot) };
         case "create_controller":
         case "add_controller_page":
