@@ -14,6 +14,7 @@ from .capture import MAX_BYTES, capture_result
 
 
 BATCH_FIELDS = {
+    "remove_gear": {"target", "gearType"},
     'rename_controller': {'referencePolicy', 'name', 'controllerName'},
     'remove_controller': {'referencePolicy', 'controllerName'},
     'remove_controller_page': {'replacementPageId', 'referencePolicy', 'controllerName', 'pageId'},
@@ -39,7 +40,7 @@ BATCH_FIELDS = {
     "set_scroll_settings": {"target", "settings"}, "set_loader": {"target", "settings"},
     "set_group": {"target", "groupId"}, "add_relation": {"target", "relationTargetId", "relationType", "usePercent"},
     "remove_relation": {"target", "relationTargetId", "relationType"},
-    "set_gear": {"target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds"},
+    "set_gear": {"target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds", "positionsInPercent", "tween", "condition"},
     "create_controller": {"name", "pages"}, "set_controller_page": {"controllerName", "pageId", "pageName", "pageIndex"},
     "set_component_instance_controller": {"target", "controllerName", "pageId", "pageName", "pageIndex"},
     "set_component_instance_property": {"target", "childPath", "propertyId", "value"},

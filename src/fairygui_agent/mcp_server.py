@@ -45,6 +45,9 @@ _locator = ProjectLocator()
 _launcher = EditorLauncher()
 _client = BridgeClient(_locator, _launcher)
 
+# 所有值仍由 Editor 按对应 Gear 的独立格式校验；枚举让工具 schema 明确类型选择。
+GearType = Literal["display", "text", "icon", "xy", "size", "color", "look", "animation", "font_size", "display2"]
+
 
 def configure_runtime(
     *,
@@ -505,28 +508,39 @@ def fgui_select_object(
 
 @mcp.tool()
 def fgui_get_gears(object_id: str | None = None, object_path: str | None = None, object_name: str | None = None) -> dict[str, Any]:
-    """读取直属子对象六类 Gear 的绑定、默认值和页面值；其它 Gear 返回原始 XML，只读不创建 Gear。"""
+    """读取直属对象十类 Gear 的绑定、类型化默认/页面值、缓动、百分比/Display2 条件及可编辑能力；未知 Gear 返回原始 XML，只读不创建。"""
     return _client.call("get_gears", {"target": _target(object_id, object_path, object_name)})
 
 
 @mcp.tool()
-def fgui_set_gear(gear_type: str, controller_name: str, default_value: Any = None,
+def fgui_set_gear(gear_type: GearType, controller_name: str, default_value: Any = None,
                   page_values: list[dict[str, Any]] | None = None, visible_page_ids: list[str] | None = None,
                   object_id: str | None = None, object_path: str | None = None, object_name: str | None = None,
-                  save: bool = False) -> dict[str, Any]:
+                  save: bool = False, positions_in_percent: bool | None = None,
+                  tween: dict[str, Any] | None = None, condition: Literal["and", "or"] | None = None) -> dict[str, Any]:
     """绑定控制器并完整替换一个 Gear 的配置，其它 Gear 保留；默认不保存，不支持 Agent undo。
 
-    gear_type 为 display/text/icon/xy/size/color。display 使用 visible_page_ids，空数组表示所有页可见。
+    基础类型为 display/text/icon/xy/size/color；扩展类型见下文。display 使用 visible_page_ids，空数组表示所有页可见。
     其它类型必须提供 default_value 和 page_values=[{pageId: "0", value: ...}]，未列页面用默认值。
     text/icon 的 value 是字符串，图标限图片 ui:// 或空串；xy 为整数像素 {x,y}；size 为 {width,height,scaleX?,scaleY?}；
     color 为 {color:"#RRGGBB",strokeColor?:"#RRGGBB"}。省略缩放为 1，省略描边为黑色。文本不支持竖线。
-    仅当前文档直属对象。save=true 保存整个组件并回读 XML；需切页验证布局与可见性，缺图要求人工验证、不回滚。
+    新类型：look={alpha:0..1,rotation,grayed:bool,touchable:bool}；animation={frame:int,playing:bool}；font_size 为1..10000整数。
+    display2 使用 visible_page_ids，condition=and/or 与主 display 组合。xy 的 positions_in_percent=true 时每个值须同时提供 x/y 和 percentX/percentY（比例1表示父尺寸100%）。
+    tween 是 xy/size/look/color 的补丁 {enabled?,duration?,delay?,ease?}，单位秒，duration为0.0001..3600，delay为0..3600，有名内置曲线，省略保留。
+    不开放 timeScale 或动画名/皮肤覆盖；现有扩展动画配置只读，避免丢数据。仅当前文档直属对象。save=true 保存整个组件并回读 XML。
     """
     params: dict[str, Any] = {"target": _target(object_id, object_path, object_name), "gearType": gear_type, "controllerName": controller_name, "save": save}
-    for key, value in (("defaultValue", default_value), ("pageValues", page_values), ("visiblePageIds", visible_page_ids)):
+    for key, value in (("defaultValue", default_value), ("pageValues", page_values), ("visiblePageIds", visible_page_ids), ("positionsInPercent", positions_in_percent), ("tween", tween), ("condition", condition)):
         if value is not None:
             params[key] = value
-    return _client.call("set_gear", params)
+    return _controller_call("set_gear", params)
+
+
+@mcp.tool()
+def fgui_remove_gear(gear_type: GearType, object_id: str | None = None, object_path: str | None = None,
+                     object_name: str | None = None, save: bool = False) -> dict[str, Any]:
+    """删除指定已识别 Gear 的完整配置（页面值、默认值、缓动）并解除绑定；保留当前普通显示值，剩余 Display Gear 重算实际可见性，不恢复源默认值。默认不保存，无完整 Agent undo。"""
+    return _controller_call("remove_gear", {"target": _target(object_id, object_path, object_name), "gearType": gear_type, "save": save})
 
 
 def _controller_call(action: str, params: dict[str, Any]) -> Any:

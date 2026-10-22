@@ -9,7 +9,7 @@ import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from fairygui_agent import PROTOCOL_VERSION, __version__
 from fairygui_agent.bridge_client import REQUIRED_CAPABILITIES, BridgeClient, BridgeError
@@ -49,6 +49,41 @@ def _make_client(root: Path) -> BridgeClient:
 
 
 class TestBridgeClientTimeout(unittest.TestCase):
+    def test_transient_response_read_and_cleanup_locks_never_replay_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root=Path(temp_dir)
+            client=_make_client(root)
+            read_text=Path.read_text
+            replace=__import__('os').replace
+            unlink=Path.unlink
+            calls={'writes':0,'reads':0,'cleanup':0}
+
+            def publish(source, destination):
+                replace(source,destination)
+                path=Path(destination)
+                if path.parent.name=='requests':
+                    calls['writes']+=1
+                    request=json.loads(read_text(path,encoding='utf8'))
+                    (root/'.agent/responses'/path.name).write_text(json.dumps({'id':request['id'],'ok':True,'result':{'done':True}}),encoding='utf8')
+
+            def locked_read(path, *args, **kwargs):
+                if path.parent.name=='responses':
+                    calls['reads']+=1
+                    if calls['reads']==1:
+                        raise PermissionError('temporary native writer lock')
+                return read_text(path,*args,**kwargs)
+
+            def locked_cleanup(path, *args, **kwargs):
+                if path.parent.name=='responses':
+                    calls['cleanup']+=1
+                    raise PermissionError('temporary cleanup lock')
+                return unlink(path,*args,**kwargs)
+
+            with patch('fairygui_agent.bridge_client.os.replace',side_effect=publish), patch.object(Path,'read_text',locked_read), patch.object(Path,'unlink',locked_cleanup):
+                self.assertEqual(client.call('set_property',{'value':1}),{'done':True})
+            self.assertEqual(calls,{'writes':1,'reads':2,'cleanup':1})
+            client.launcher.wake.assert_not_called()
+
     def test_timeout_cleans_unclaimed_request_and_warns(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

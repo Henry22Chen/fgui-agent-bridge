@@ -69,6 +69,7 @@ SPINE_CAPABILITIES = frozenset({"get_loader3d", "set_loader3d", "capture_documen
 CONTROLLER_CAPABILITIES = frozenset({"get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page"})
 CONTROLLER_LIFECYCLE_CAPABILITIES = frozenset({'rename_controller', 'reorder_controller_actions', 'reorder_controller_pages', 'remove_controller_page', 'remove_controller', 'get_controller_references'})
 CONTROLLER_HOME_FIELDS = frozenset({"homePageType", "homePage", "autoRadioGroupDepth"})
+GEAR_ADVANCED_TYPES = frozenset({"look", "animation", "font_size", "display2"})
 GEAR_CAPABILITIES = frozenset({"get_gears", "set_gear"})
 CONTROLLER_ACTION_CAPABILITIES = frozenset({"get_controller_actions", "upsert_controller_action", "remove_controller_action"})
 EDITING_CAPABILITIES = frozenset({"get_image_settings", "set_image_settings", "create_object", "set_properties", "get_button_binding", "set_button_binding",
@@ -258,6 +259,22 @@ class BridgeClient:
         if action == "apply_batch" and isinstance((params or {}).get("operations"), list):
             requested.update(op.get("action") for op in params["operations"] if isinstance(op, dict) and isinstance(op.get("action"), str))
         list_operations = (params or {}).get("operations", []) if action == "apply_batch" else [{"action": action, "params": params or {}}]
+        gear_required: set[str] = set()
+        if "remove_gear" in requested:
+            gear_required.add("remove_gear")
+        for op in list_operations:
+            if not isinstance(op, dict) or not isinstance(op.get("params"), dict) or op.get("action") != "set_gear":
+                continue
+            fields = op["params"]
+            if fields.get("gearType") in GEAR_ADVANCED_TYPES or "condition" in fields:
+                gear_required.add("gear_advanced")
+            if "tween" in fields:
+                gear_required.add("gear_tween")
+            if "positionsInPercent" in fields:
+                gear_required.add("gear_xy_percent")
+        missing = gear_required - set(status.get("capabilities", []))
+        if missing:
+            raise BridgeError(f"FairyGUI Agent Bridge 缺少高级 Gear 能力：{', '.join(sorted(missing))}，请同步并重新加载 0.21.0 或更高版本插件。")
         lifecycle_required = requested & CONTROLLER_LIFECYCLE_CAPABILITIES
         for op in list_operations:
             if not isinstance(op, dict) or not isinstance(op.get("params"), dict):
@@ -390,12 +407,20 @@ class BridgeClient:
                 return None
             try:
                 raw = response_path.read_text(encoding="utf-8")
+            except (PermissionError, FileNotFoundError):
+                # Windows 在原生写入/替换文件的短暂窗口可能拒绝读取；只等待同一个响应，绝不重发写指令。
+                return None
+            try:
                 _timing["responseBytes"] = len(raw.encode("utf-8"))
                 _timing["requestWaitMs"] = round((time.perf_counter() - wait_started) * 1000, 3)
                 response = json.loads(raw)
                 _timing["editor"] = response.get("timing")
             finally:
-                response_path.unlink(missing_ok=True)
+                try:
+                    response_path.unlink(missing_ok=True)
+                except PermissionError:
+                    # 已读到有效响应时，清理锁不能把已执行成功的命令伪装成失败；残留由队列维护清理。
+                    pass
             if not isinstance(response, dict):
                 raise BridgeError(f"FairyGUI 返回了无效响应：{action}")
             return response

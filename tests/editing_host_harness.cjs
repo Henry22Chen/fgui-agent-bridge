@@ -22,3 +22,13 @@ doc.content.numChildren=0;
 assert.throws(()=>write({width:10}),/直属对象/);
 assert.throws(()=>ctx.createObject({objectType:'group',save:true}),/空分组/);
 console.log('PASS: native geometry ordering, float tolerance, default unsaved semantics, input preflight and ownership');
+
+// 根 Write() 是实例覆盖；保存验证必须使用完整组件定义，普通对象仍使用 Write()。
+ctx.gearXmlData=node=>node;ctx.clearAgentHistory=()=>{};ctx.componentXmlNode=()=>({kind:'definition',size:'800,600'});
+const root={Write(){throw new Error('root instance serializer must not be used');},Write_editMode(){return {kind:'definition',size:'800,600'};}};
+doc.content=root;doc.Save=()=>{doc.isModified=false;};
+assert.equal(ctx.finishEditingWrite(doc,root,{}, {},{save:true},true).persisted,true);
+ctx.componentXmlNode=()=>({kind:'instance',size:'20,30'});
+const child={Write(){return {kind:'instance',size:'20,30'};}};
+assert.equal(ctx.finishEditingWrite(doc,child,{}, {},{save:true},true).persisted,true);
+console.log('PASS: root definition and child instance persistence snapshots use their native serializers');

@@ -4,12 +4,12 @@
 
 ## 版本与通道
 
-- Bridge 版本：`0.20.0`（Git 标签 `v0.20.0`）
+- Bridge 版本：`0.21.0`（Git 标签 `v0.21.0`）
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
 - 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
-- MCP 工具数：122；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
+- MCP 工具数：123；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
 - 传输：MCP stdio；底层为目标工程 `.agent/` 下的本地 JSON 文件队列
 - 实例目录：`.agent/instances/<PID>-<启动时间>/` 内的 `requests`、`processing`、`responses` 和 `status.json`；根目录 `.agent/status.json` 只作诊断快照，`.agent/bridge.log` 为日志
 - Windows 校验插件当前工程路径、`editorProcessId`、`editorProcessStartedAt` 和真实进程 exe；启动时间是 UTC `yyyyMMddHHmmssfffffff` 文本，避免 PID 复用与浮点精度损失
@@ -83,7 +83,8 @@
 | `fgui_get_component_properties` | 无 | 当前根组件的文本/图标属性定义 |
 | `fgui_upsert_component_property` / `fgui_remove_component_property` | child_path、property_id=0/1、save=false；upsert 另传 label? | 创建/修改/删除定义映射；省略 label 保留，空串清空；不删除内部元件 |
 | `fgui_set_controller_properties` | controller_name、settings={exported?,alias?,homePageType?,homePage?,autoRadioGroupDepth?}、save=false | 当前根控制器导出、备注、首页规则与自动单选层级；保留当前预览页 |
-| `fgui_get_gears` / `fgui_set_gear` | 对象定位；修改 `gear_type`, `controller_name`, `default_value?`, `page_values?`, `visible_page_ids?`, `save=false` | 读取/完整替换一个 Gear；其余 Gear 及缓动等附加配置保留 |
+| `fgui_get_gears` / `fgui_set_gear` | 对象定位；修改 `gear_type`, `controller_name`, `default_value?`, `page_values?`, `visible_page_ids?`, `positions_in_percent?`, `tween?`, `condition?`, `save=false` | 十类结构化配置、当前实际状态；完整替换页面值，缓动是保留省略字段的补丁 |
+| `fgui_remove_gear` | gear_type、对象定位、save=false | 删除整项配置并解绑；普通显示值保持，实际显隐按剩余 Gear 重算 |
 | `fgui_get_controller_actions` / `fgui_upsert_controller_action` / `fgui_remove_controller_action` | `controller_name`；upsert 另传 `action`, `action_index?`, `save=false`；remove 必传索引 | 读取联动及可用目标页面；省略索引追加，指定索引替换或删除单条 |
 | `fgui_list_transitions` / `fgui_get_transition` | 无 / `name` | 读取当前组件的 Transition |
 | `fgui_upsert_transition` / `fgui_remove_transition` | 类型化 `transition` / `name` | 声明式创建、完整替换或删除 Transition |
@@ -104,7 +105,7 @@
 
 - **页面与作用域**：Controller/Action 属于当前文档根组件，Gear 属于直属子对象；联动可引用当前/直属子组件控制器，不改子组件资源。页面定位三选一，优先稳定 ID；名称不允许空白、逗号或控制字符，同一控制器中新页面名称不能重复。创建有页面的控制器或向空控制器追加首页时自动选中第一页。切页不修改 homePage，重开可能按首页规则重选。
 - **实例与定义**：`get_controllers` 额外返回 exported/alias。实例值用 `get_component_instance` 及两个实例 setter；组件定义用三个 component_property 工具，控制器导出用 set_controller_properties。只暴露原生文本/图标，拒绝无效/重复路径；不等于 `customData`。详见[组件属性说明](component-properties.md)。
-- **Gear 配置**：display 用 `visible_page_ids`，空数组是全页可见；其余类型必须传 `default_value` 和 `page_values=[{"pageId":"0","value":...}]`，未列页使用默认值。text 为不含竖线的字符串；icon 为图片 ui:// 或空串；xy 为整数 `{x,y}`；size 为非负整数 `{width,height,scaleX?,scaleY?}`（缩放默认 1）；color 为 `{color:"#RRGGBB",strokeColor?:"#RRGGBB"}`（描边默认黑）。数值绝对值不超过 1000000。set 是完整替换而非单页补丁；读取中的未序列化默认值为 null，其它 Gear 返回 XML。
+- **Gear 配置**：display/display2 用 `visible_page_ids`，空数组是全页可见；其余类型必须传 `default_value` 和 `page_values=[{"pageId":"0","value":...}]`，未列页使用默认值。text 为不含竖线的字符串；icon 为图片 ui:// 或空串；xy 为整数 `{x,y}`；size 为非负整数 `{width,height,scaleX?,scaleY?}`（缩放默认 1）；color 为 `{color:"#RRGGBB",strokeColor?:"#RRGGBB"}`（描边默认黑）。数值绝对值不超过 1000000。set 是完整替换而非单页补丁；读取中的未序列化默认值为 null；look、animation、font_size、display2、百分比 XY、缓动及删除规则见[Gear 生命周期](gear-lifecycle.md)，未知 Gear 保留原始 XML。
 - **Action 配置**：`type` 为 change_page/play_transition；公共 `fromPageIds`、`toPageIds` 都使用源控制器页面 ID，省略/空数组匹配任意页，两组条件同时满足才执行。change_page 使用 `objectId`（空串/省略为当前组件）、`controllerName`、`targetPageId`，或 targetMode=follow_index/follow_name（省略 targetPageId）；play_transition 使用 `transitionName`、`repeat`（默认 1，正整数或 -1 循环）、`delay`（默认 0，0..86400 秒）、`stopOnExit`（默认 false）。引用必须存在，按引用图拒绝自引用/循环。索引从 0 开始，增删后重读；更新完整替换单条，不传读取元数据 index/xml。未知类型可读取、保留、删除，不能 upsert。
 - **预览与外观**：编辑 Action 不触发执行；普通编辑模式切页可应用控制器/Gear，但 Editor 6.1.4 只在原生运行预览中播放联动 Transition。单独 `fgui_preview_animation` 不等于验证联动触发。Gear 最终外观还受布局、autoSize、基础 visible、显示锁等影响，不能只看对象树 visible 判断显隐。
 - **Loader3D**：仅已有包内 Spine，加载和名称校验最长等待 8 秒；busy 时等待，不重复写入。跳过名称校验不能绕过加载失败或资源类型校验。修改失败按响应区分实际状态与回退结果；`verify_document` 可校验资源 URL、动画、皮肤、播放及帧字段。
@@ -154,19 +155,19 @@
 - 属性与验证：`replace-object-resource`、`get-text-style`、`set-text-style`、`set-properties`、`verify-document`、`capture-document`
 - 原生布局：`create-object`、`get-image-settings/set-image-settings`、`get-button-binding/set-button-binding`、`get-list-settings/set-list-settings`、`get-scroll-settings/set-scroll-settings`、`get-loader/set-loader`、`get-group/set-group`、`get-relations/add-relation/remove-relation`
 - 列表与树：`get/set-list-settings`、`get-list-item-resources`、`set-list-item-resources SETTINGS_JSON`；沿用 JSON 支持高级设置和 level，`--id/--path/--name` 定位直属 List，写入支持 `--save`。
-- 状态编辑：`controllers`、`create-controller`、`add-controller-page`、`rename-controller-page`、`set-controller-page`、`get-gears`、`set-gear`、`get-controller-actions`、`upsert-controller-action`、`remove-controller-action`
+- 状态编辑：`controllers`、`create-controller`、`add-controller-page`、`rename-controller-page`、`set-controller-page`、`get-gears`、`set-gear`、`remove-gear`、`get-controller-actions`、`upsert-controller-action`、`remove-controller-action`
 - 预览：`preview-transition`、`preview-movieclip`
 - 保存发布：`save`、`discard`、`save-all`、`history`、`undo`、`redo`、`publish-settings`、`publish`
 - `call` 仅调试原始 Action，不替代正式命令。
 
-全局参数 `--project`、`--editor`、`--timeout` 必须置于子命令前。Gear CLI 配置 JSON 使用 defaultValue/pageValues/visiblePageIds；Action JSON 与上述配置相同，使用 camelCase。
+全局参数 `--project`、`--editor`、`--timeout` 必须置于子命令前。Gear CLI 配置 JSON 使用 defaultValue/pageValues/visiblePageIds/positionsInPercent/tween/condition；Action JSON 与上述配置相同，使用 camelCase。
 
 ## 关键限制
 
 - 兼容基线是 FairyGUI Editor `6.1.4`；其他 6.x 尚未完成真实环境矩阵验证。
 - Loader3D 专用接口支持已有包内 Spine；不包含 DragonBones、SWF、外部 Spine 导入或运行时游戏代码层动画控制。
 - 通用包资源的删除、移动、重命名仍未开放；只提供带 `force` 和引用检查的 MovieClip 删除。
-- 不开放跨文档控制器引用自动迁移、独立 Gear 解绑/删除或百分比 XY/Alpha 等高级编辑及跨多层子组件联动；文本样式不支持自动 external reload。
+- 不开放跨文档控制器引用自动迁移、自定义 Gear 曲线编辑、动画 timeScale/动画名/皮肤覆盖及跨多层子组件联动；文本样式不支持自动 external reload。
 - Windows Editor 6.1.4 已有隔离实测，未覆盖所有对象/业务组合；不等于业务工程发布和 Unity/设备验收。实现和自动回归入口见 `plugin/` 与 `tests/`；临时验证报告和截图仅本地保存，不纳入 Git。
 
 ## 文件变动同步矩阵与对照检查
@@ -184,3 +185,5 @@
 4. 创建/导入/预览变更应在 FairyGUI Editor `6.1.4` 隔离工程副本中验证，避免污染正式工程。
 
 控制器生命周期、引用清理策略、首页类型、跟随规则及错误码详见[控制器生命周期](controller-lifecycle.md)。
+
+0.21.0 支持十类结构化 Gear 和 remove_gear；新值结构、缓动、百分比、删除/解绑显示策略及原生验证边界见[Gear 生命周期](gear-lifecycle.md)。

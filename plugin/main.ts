@@ -11,7 +11,7 @@ const App = FairyEditor.App;
 const previousRunInBackground = UnityEngine.Application.runInBackground;
 UnityEngine.Application.runInBackground = true;
 
-const BRIDGE_VERSION = "0.20.0";
+const BRIDGE_VERSION = "0.21.0";
 const PROTOCOL_VERSION = "2.0";
 const POLL_INTERVAL_FRAMES = 6;
 const STATUS_MIN_INTERVAL_MS = 1000;
@@ -373,8 +373,9 @@ async function setLoader3d(params: any): Promise<any> {
     } finally { loader3dBusy = false; }
 }
 
-const GEAR_TYPES: any = { display: { index: 0, tag: "gearDisplay" }, xy: { index: 1, tag: "gearXY" },
-    size: { index: 2, tag: "gearSize" }, color: { index: 4, tag: "gearColor" }, text: { index: 6, tag: "gearText" }, icon: { index: 7, tag: "gearIcon" } };
+const GEAR_TYPES: any = { display: { index: 0, tag: "gearDisplay" }, xy: { index: 1, tag: "gearXY", tween: true },
+    size: { index: 2, tag: "gearSize", tween: true }, color: { index: 4, tag: "gearColor", tween: true }, text: { index: 6, tag: "gearText" }, icon: { index: 7, tag: "gearIcon" },
+    look: { index: 3, tag: "gearLook", tween: true }, animation: { index: 5, tag: "gearAni" }, display2: { index: 8, tag: "gearDisplay2" }, font_size: { index: 9, tag: "gearFontSize" } };
 
 function gearTarget(doc: any, target: any): any {
     const obj = resolveObject(doc, target);
@@ -407,31 +408,60 @@ function gearNodes(xml: any): any[] {
 
 function parseGearValue(type: string, value: string): any {
     if (type === "text" || type === "icon") return value;
+    if (type === "font_size") return Number(value);
     const parts = value.split(",");
+    if (type === "look") return { alpha: Number(parts[0]), rotation: Number(parts[1]), grayed: parts[2] === "1", touchable: parts[3] === "1" };
+    if (type === "animation") return { frame: Number(parts[0]), playing: parts[1] === "p",
+        ...(parts[2] || parts[3] ? { animationName: parts[2] || "", skinName: parts[3] || "" } : {}) };
     if (type === "color") return { color: parts[0].toUpperCase(), strokeColor: (parts[1] || "#000000").toUpperCase() };
     const numbers = parts.map(Number);
-    if (type === "xy") return { x: numbers[0], y: numbers[1] };
+    if (type === "xy") return { x: numbers[0], y: numbers[1], ...(parts.length >= 4 ? { percentX: numbers[2], percentY: numbers[3] } : {}) };
     return { width: numbers[0], height: numbers[1], scaleX: numbers.length > 2 ? numbers[2] : 1, scaleY: numbers.length > 3 ? numbers[3] : 1 };
+}
+
+/** 缓动配置按原生默认值解释；未知/自定义曲线仍可诊断，省略新参数时保留原 XML。 */
+function gearTween(node: any): any {
+    const attr = (key: string, fallback: string) => node.GetAttribute(key) === null || node.GetAttribute(key) === undefined ? fallback : String(node.GetAttribute(key));
+    return { enabled: attr("tween", "false") === "true", duration: Number(attr("duration", "0.3")), delay: Number(attr("delay", "0")), ease: attr("ease", "Quad.Out") };
 }
 
 function gearDescription(type: string, node: any): any {
     if (!node) return { type, bound: false };
     const pages = String(node.GetAttribute("pages") || "").split(",").filter(Boolean);
     const result: any = { type, bound: true, controllerName: String(node.GetAttribute("controller") || ""), xml: String(node.ToXMLString(false)) };
-    if (type === "display") return { ...result, visiblePageIds: pages, allPagesVisible: pages.length === 0 };
+    if (type === "display" || type === "display2") return { ...result, visiblePageIds: pages, allPagesVisible: pages.length === 0,
+        ...(type === "display2" ? { condition: String(node.GetAttribute("condition") || "0") === "1" ? "or" : "and" } : {}) };
+    if (GEAR_TYPES[type].tween) result.tween = gearTween(node);
+    if (type === "xy") result.positionsInPercent = String(node.GetAttribute("positionsInPercent")) === "true";
     const raw = node.GetAttribute("default"), values = String(node.GetAttribute("values") || "").split("|");
     return { ...result, defaultValue: raw === null || raw === undefined ? null : parseGearValue(type, String(raw)),
         pageValues: pages.map((pageId, i) => ({ pageId, value: values[i] === undefined ? null : parseGearValue(type, values[i]) })) };
 }
 
+/** 当前原生显示状态与 Gear 配置分开；visible 是手动开关，effectiveVisible 另计 Gear/分组的显隐结果。 */
+function gearDisplayState(obj: any): any {
+    const value: any = {};
+    for (const key of ["x", "y", "width", "height", "scaleX", "scaleY", "alpha", "rotation", "grayed", "touchable", "visible", "text", "icon", "playing", "frame"])
+        if (obj[key] !== undefined) value[key] = safeValue(obj[key]);
+    if (obj.textFormat) value.fontSize = Number(obj.textFormat.size);
+    if (typeof obj.internalVisible === "boolean" && typeof obj.internalVisible2 === "boolean") value.effectiveVisible = obj.internalVisible && obj.internalVisible2;
+    return value;
+}
+
 function getGears(params: any): any {
     const doc = getActiveDocument(), obj = gearTarget(doc, params.target), xml = obj.WriteGears();
-    return { target: targetSummary(obj, params.target), documentUrl: doc.content.resourceURL,
-        gears: Object.keys(GEAR_TYPES).map(type => ({ ...gearDescription(type, xml.GetNode(GEAR_TYPES[type].tag)), supported: obj.SupportGear(GEAR_TYPES[type].index) })),
+    return { target: targetSummary(obj, params.target), documentUrl: doc.content.resourceURL, currentDisplay: gearDisplayState(obj),
+        gears: Object.keys(GEAR_TYPES).map(type => {
+            const description = gearDescription(type, xml.GetNode(GEAR_TYPES[type].tag));
+            const extendedAnimation = type === "animation" && description.bound && [description.defaultValue, ...description.pageValues.map(p => p.value)].some(v => v && (v.animationName || v.skinName));
+            return { ...description, supported: obj.SupportGear(GEAR_TYPES[type].index), editable: obj.SupportGear(GEAR_TYPES[type].index) && !extendedAnimation,
+                capabilities: { remove: true, tween: Boolean(GEAR_TYPES[type].tween), positionsInPercent: type === "xy", condition: type === "display2" },
+                ...(extendedAnimation ? { limitation: "带动画名/皮肤的扩展动画配置只读；本版本只验证 frame/playing，不可覆盖这些字段" } : {}) };
+        }),
         otherGears: gearNodes(xml).filter(n => !Object.keys(GEAR_TYPES).some(type => GEAR_TYPES[type].tag === String(n.name))).map(n => String(n.ToXMLString(false))) };
 }
 
-function encodeGearValue(type: string, value: any): string {
+function encodeGearValue(type: string, value: any, percent: boolean = false): string {
     const fail = (message: string): never => verificationError("invalid_argument", message, { gearType: type });
     if (type === "text" || type === "icon") {
         if (typeof value !== "string" || /[|\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value)) fail("文字/图标值必须是字符串，不能含竖线或非法 XML 控制字符");
@@ -443,8 +473,25 @@ function encodeGearValue(type: string, value: any): string {
         }
         return value;
     }
+    if (type === "font_size") {
+        if (!Number.isInteger(value) || value < 1 || value > 10000) fail("字号必须是 1..10000 的整数");
+        return String(value);
+    }
     if (!value || typeof value !== "object" || Array.isArray(value)) fail("Gear 值必须是字段对象");
-    const keys = type === "xy" ? ["x", "y"] : type === "size" ? ["width", "height", "scaleX", "scaleY"] : ["color", "strokeColor"];
+    if (type === "look") {
+        if (Object.keys(value).some(k => !["alpha", "rotation", "grayed", "touchable"].includes(k))
+            || typeof value.alpha !== "number" || !Number.isFinite(value.alpha) || value.alpha < 0 || value.alpha > 1
+            || typeof value.rotation !== "number" || !Number.isFinite(value.rotation) || Math.abs(value.rotation) > 1000000
+            || typeof value.grayed !== "boolean" || typeof value.touchable !== "boolean") fail("look 必须提供 alpha(0..1)、rotation、grayed、touchable，后两者为布尔值");
+        return [value.alpha, value.rotation, value.grayed ? 1 : 0, value.touchable ? 1 : 0].join(",");
+    }
+    if (type === "animation") {
+        if (Object.keys(value).some(k => !["frame", "playing"].includes(k)) || !Number.isInteger(value.frame) || value.frame < 0 || value.frame > 1000000 || typeof value.playing !== "boolean")
+            fail("animation 仅接受 frame(0..1000000 整数)和 playing 布尔值；timeScale/动画名/皮肤尚未开放");
+        // Editor 的 gearAni 用 p/s 编码，并为动画名和皮肤保留两个空列。
+        return `${value.frame},${value.playing ? "p" : "s"},,`;
+    }
+    const keys = type === "xy" ? (percent ? ["x", "y", "percentX", "percentY"] : ["x", "y"]) : type === "size" ? ["width", "height", "scaleX", "scaleY"] : ["color", "strokeColor"];
     if (Object.keys(value).some(key => keys.indexOf(key) < 0)) fail("Gear 值包含未知字段");
     if (type === "color") {
         const color = (input: any): string => {
@@ -456,52 +503,129 @@ function encodeGearValue(type: string, value: any): string {
     const numbers = keys.map(key => value[key] === undefined && (key === "scaleX" || key === "scaleY") ? 1 : value[key]);
     if (numbers.some(n => typeof n !== "number" || !Number.isFinite(n) || Math.abs(n) > 1000000)) fail("坐标/尺寸/缩放必须是有限数字，绝对值不超过 1000000");
     // Editor 6.1.4 FGearXY.ReadValue 使用 Int32.Parse；小数必须在 ReadGears 前拒绝。
-    if (type === "xy" && numbers.some(n => !Number.isInteger(n))) fail("GearXY 的 x/y 必须是整数像素");
+    if (type === "xy" && numbers.slice(0, 2).some(n => !Number.isInteger(n))) fail("GearXY 的 x/y 必须是整数像素");
     if (type === "size" && (!Number.isInteger(numbers[0]) || !Number.isInteger(numbers[1]) || numbers[0] < 0 || numbers[1] < 0)) fail("宽高必须是非负整数像素");
     return numbers.join(",");
 }
 
-/** 替换一个 Gear 的完整页面配置；其它 Gear 和目标 Gear 的缓动等附加设置保留。 */
-function setGear(params: any): any {
+/** Editor 将 Gear 浮点值写为三位、时间写为四位小数；仅这些已验证字段允许原生舍入，其余结构和值仍严格比较。 */
+function gearSemanticsEqual(a: any, b: any, field: string = ""): boolean {
+    if (typeof a === "number" && typeof b === "number" && ["alpha", "rotation", "percentX", "percentY", "duration", "delay"].includes(field)) {
+        const precision = field === "duration" || field === "delay" ? 0.0001 : 0.001;
+        // 原生字段先经过 Single，再格式化 XML；较大数值须同时计入 Single 精度。
+        return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= precision + Math.max(Math.abs(a), Math.abs(b)) * 0.0000001;
+    }
+    if (a === b) return true;
+    if (!a || !b || typeof a !== "object" || typeof b !== "object" || Array.isArray(a) !== Array.isArray(b)) return false;
+    const keys = Object.keys(a).filter(k => k !== "xml"), other = Object.keys(b).filter(k => k !== "xml");
+    return keys.length === other.length && keys.every(k => Object.prototype.hasOwnProperty.call(b, k) && gearSemanticsEqual(a[k], b[k], k));
+}
+
+/** 新缓动参数是补丁；省略字段保持原配置，关闭缓动也保留时长/延迟/曲线。 */
+function patchGearTween(node: any, patch: any, spec: any): void {
+    if (patch === undefined) return;
+    if (!spec.tween) verificationError("unsupported_gear_option", "本类型没有已验证的缓动效果；仅 xy/size/look/color 可编辑 tween", {});
+    if (!patch || typeof patch !== "object" || Array.isArray(patch) || Object.keys(patch).some(k => !["enabled", "duration", "delay", "ease"].includes(k)))
+        verificationError("invalid_argument", "tween 仅接受 enabled/duration/delay/ease 对象", {});
+    if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") verificationError("invalid_argument", "tween.enabled 必须为布尔值", {});
+    for (const key of ["duration", "delay"]) if (patch[key] !== undefined && (typeof patch[key] !== "number" || !Number.isFinite(patch[key]) || patch[key] < 0 || patch[key] > 3600 || key === "duration" && patch[key] < 0.0001))
+        verificationError("invalid_argument", "缓动时长为 0.0001..3600 秒；延迟为 0..3600 秒", { key });
+    const desired = { ...gearTween(node), ...patch };
+    if (patch.ease !== undefined) {
+        if (typeof patch.ease !== "string" || !patch.ease.trim() || patch.ease === "Custom") verificationError("invalid_argument", "ease 使用有名内置曲线；自定义曲线只能保留，不能新建或编辑", {});
+        desired.ease = normalizeEase(patch.ease);
+        if (desired.ease === "Custom") verificationError("invalid_argument", "自定义曲线尚未开放", {});
+        // 原生自定义曲线数据不自动裁剪；已有 Custom 必须先通过 Editor 明确迁移。
+        if (gearTween(node).ease === "Custom" && desired.ease !== "Custom") verificationError("unsupported_gear_option", "现有自定义曲线只允许保留；不能隐式清除曲线数据", {});
+    }
+    node.SetAttribute("tween", desired.enabled ? "true" : "false");
+    node.SetAttribute("duration", String(desired.duration)); node.SetAttribute("delay", String(desired.delay)); node.SetAttribute("ease", desired.ease);
+}
+
+/** 删除整个 Gear 同时解除绑定；不把 XML 删除冒充恢复默认显示，普通值保留当前状态，显隐由剩余 Gear 重算。 */
+function removeGear(params: any): any {
+    assertKnownKeys(params, ["target", "gearType", "save"], "remove_gear");
     const doc = getActiveDocument(), obj = gearTarget(doc, params.target), type = params.gearType;
     const spec = typeof type === "string" && Object.prototype.hasOwnProperty.call(GEAR_TYPES, type) ? GEAR_TYPES[type] : null;
-    if (!spec) verificationError("unsupported_gear", "仅支持 display/text/icon/xy/size/color", {});
+    if (!spec) verificationError("unsupported_gear", "只能移除已识别的 Gear 类型；未知类型保留用于诊断", {});
+    const beforeXml = obj.WriteGears(), old = beforeXml.GetNode(spec.tag), before = gearDescription(type, old);
+    const visibilityBefore = gearDisplayState(obj).effectiveVisible;
+    const display = () => {
+        const value = gearDisplayState(obj);
+        delete value.effectiveVisible;
+        return value;
+    };
+    const displayBefore = display();
+    const result = editComponentMetadata(doc, obj, params, () => gearDescription(type, obj.WriteGears().GetNode(spec.tag)), Boolean(old), () => {
+        const Xml = (CS as any).FairyGUI.Utils.XML, xml = new Xml(String(beforeXml.ToXMLString(false)));
+        xml.RemoveChild(xml.GetNode(spec.tag));
+        const expected = gearNodes(xml).map(gearXmlData).sort((a, b) => a.name.localeCompare(b.name));
+        obj.ReadGears(xml);
+        // 重建会重新计算 Display/Display2。其它 Gear 不重新 Apply，避免把当前显示切回默认值。
+        obj.CheckGearDisplay();
+        const actual = gearNodes(obj.WriteGears()).map(gearXmlData).sort((a, b) => a.name.localeCompare(b.name));
+        if (!valuesEqual(expected, actual) || obj.WriteGears().GetNode(spec.tag)) throw new Error("Gear 删除改变了其它配置或未实际清除绑定");
+        if (!valuesEqual(displayBefore, display())) throw new Error("删除 Gear 意外改变当前显示值");
+    });
+    return { ...result, before, bindingCleared: true, configurationRemoved: true, displayBefore, displayAfter: display(),
+        effectiveVisibleBefore: visibilityBefore, effectiveVisibleAfter: gearDisplayState(obj).effectiveVisible,
+        visibilityPolicy: "remaining_display_gears", valuePolicy: "keep_current", currentDisplayRestoredToDefault: false,
+        note: "移除该 Gear 的全部页面值、默认值、缓动及绑定；保留当前普通显示值，不恢复源资源默认值。剩余 Display/Display2 决定实际可见性。单纯解绑的原生内存配置不会持久化，故本接口明确同时清除配置。" };
+}
+
+/** 替换一个 Gear 的完整页面配置；其它 Gear 和目标 Gear 的缓动等附加设置保留。 */
+function setGear(params: any): any {
+    assertKnownKeys(params, ["target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds", "positionsInPercent", "tween", "condition", "save"], "set_gear");
+    const doc = getActiveDocument(), obj = gearTarget(doc, params.target), type = params.gearType;
+    const spec = typeof type === "string" && Object.prototype.hasOwnProperty.call(GEAR_TYPES, type) ? GEAR_TYPES[type] : null;
+    if (!spec) verificationError("unsupported_gear", "不支持的 Gear 类型", {});
     if (!obj.SupportGear(spec.index)) verificationError("unsupported_gear", "该对象不支持此 Gear", { type });
     if (params.save !== undefined && typeof params.save !== "boolean") verificationError("invalid_argument", "save 必须是布尔值", {});
+    const beforeXml = obj.WriteGears(), old = beforeXml.GetNode(spec.tag);
+    if (type === "xy" && old && old.GetAttribute("positionsInPercent") && !["true", "false"].includes(String(old.GetAttribute("positionsInPercent"))))
+        verificationError("unsupported_gear", "现有百分比标志格式未知，拒绝覆盖", {});
+    if (params.positionsInPercent !== undefined && (type !== "xy" || typeof params.positionsInPercent !== "boolean")) verificationError("invalid_argument", "positionsInPercent 仅用于 xy 且必须为布尔值", {});
+    if (params.condition !== undefined && (type !== "display2" || !["and", "or"].includes(params.condition))) verificationError("invalid_argument", "condition 仅用于 display2，取 and/or", {});
+    const percent = type === "xy" && (params.positionsInPercent === undefined ? old && old.GetAttribute("positionsInPercent") === "true" : params.positionsInPercent);
+    if (type === "animation" && old) {
+        const description = gearDescription(type, old);
+        if ([description.defaultValue, ...description.pageValues.map(p => p.value)].some(v => v && (v.animationName || v.skinName)))
+            verificationError("unsupported_gear", "扩展动画名/皮肤尚未验证，拒绝以 frame/playing 覆盖", {});
+    }
     const controller = resolveController(doc, params.controllerName), validPages = controllerSnapshot(controller).pages.map(p => p.id);
     const validateIds = (ids: any): void => {
         if (!Array.isArray(ids) || ids.some(id => typeof id !== "string" || validPages.indexOf(id) < 0) || new Set(ids).size !== ids.length)
             verificationError("invalid_argument", "页面 ID 必须属于指定控制器且不能重复", {});
     };
     let ids: string[], values: string[] = [], defaultValue: string;
-    if (type === "display") {
+    if (type === "display" || type === "display2") {
         if (params.defaultValue !== undefined || params.pageValues !== undefined) verificationError("invalid_argument", "display 仅使用 visiblePageIds；空数组表示所有页可见", {});
         validateIds(params.visiblePageIds); ids = params.visiblePageIds.slice();
     } else {
         if (params.visiblePageIds !== undefined || !Array.isArray(params.pageValues)) verificationError("invalid_argument", "非 display Gear 必须提供 defaultValue 和 pageValues 数组", {});
-        defaultValue = encodeGearValue(type, params.defaultValue);
+        defaultValue = encodeGearValue(type, params.defaultValue, Boolean(percent));
         ids = params.pageValues.map(entry => entry && entry.pageId);
         validateIds(ids);
         values = params.pageValues.map(entry => {
             if (!entry || Object.keys(entry).some(key => key !== "pageId" && key !== "value")) verificationError("invalid_argument", "页面条目仅允许 pageId/value", {});
-            return encodeGearValue(type, entry.value);
+            return encodeGearValue(type, entry.value, Boolean(percent));
         });
     }
     // 按控制器页面顺序序列化，调用方的数组顺序不会改变页面身份。
     const order = ids.map((id, i) => ({ id, value: values[i] })).sort((a, b) => validPages.indexOf(a.id) - validPages.indexOf(b.id));
     ids = order.map(v => v.id); values = order.map(v => v.value);
-    const beforeXml = obj.WriteGears(), old = beforeXml.GetNode(spec.tag);
-    // 百分比位置还需维护 positionsInPercent；首批明确拒绝，避免普通 xy 覆盖高级配置。
-    if (type === "xy" && old && (old.GetAttribute("positionsInPercent") || old.GetAttribute("percent")))
-        verificationError("unsupported_gear", "百分比位置 Gear 暂不支持编辑", {});
     const Xml = (CS as any).FairyGUI.Utils.XML;
     const xml = new Xml(String(beforeXml.ToXMLString(false)));
     const node = xml.GetNode(spec.tag) || Xml.Create(spec.tag);
     if (!xml.GetNode(spec.tag)) xml.AppendChild(node);
     node.SetAttribute("controller", String(controller.name)); node.SetAttribute("pages", ids.join(","));
-    if (type !== "display") { node.SetAttribute("values", values.join("|")); node.SetAttribute("default", defaultValue); }
+    if (type !== "display" && type !== "display2") { node.SetAttribute("values", values.join("|")); node.SetAttribute("default", defaultValue); }
+    if (type === "xy") node.SetAttribute("positionsInPercent", percent ? "true" : "false");
+    if (type === "display2") node.SetAttribute("condition", params.condition === undefined ? String(old && old.GetAttribute("condition") || "0") : params.condition === "or" ? "1" : "0");
+    patchGearTween(node, params.tween, spec);
     const expected = gearDescription(type, node), before = gearDescription(type, old);
-    const semantic = (v: any): any => { const copy = { ...v }; delete copy.xml; return copy; };
+    const semantic = (value: any): any => { const copy = { ...value }; delete copy.xml; return copy; };
+    // 变更检测保持精确，避免吞掉接近序列化精度的真实编辑；容差只用于原生写入后的校验。
     const changed = !valuesEqual(semantic(before), semantic(expected));
     let after: any = before;
     if (changed) {
@@ -513,10 +637,10 @@ function setGear(params: any): any {
             // 不调用组件 ApplyController，避免额外执行控制器联动或切换页面。
             for (const current of controllerList(doc)) obj.HandleControllerChanged(current);
             const actualXml = obj.WriteGears(); after = gearDescription(type, actualXml.GetNode(spec.tag));
-            if (!valuesEqual(semantic(after), semantic(expected))) throw new Error("Gear Editor 回读与期望不符");
+            if (!gearSemanticsEqual(after, expected)) throw new Error("Gear Editor 回读与期望不符");
             const untouched = (root: any): any[] => gearNodes(root).filter(n => String(n.name) !== spec.tag).map(gearXmlData).sort((a, b) => a.name.localeCompare(b.name));
             if (!valuesEqual(untouched(beforeXml), untouched(actualXml))) throw new Error("其它 Gear 的配置发生变化");
-            const extras = (n: any): any => { const data = gearXmlData(n); for (const k of ["controller", "pages", "values", "default"]) delete data.attrs[k]; return data; };
+            const extras = (n: any): any => { const data = gearXmlData(n); for (const k of ["controller", "pages", "values", "default", "positionsInPercent", "condition", "tween", "ease", "duration", "delay"]) delete data.attrs[k]; return data; };
             if (!valuesEqual(extras(node), extras(actualXml.GetNode(spec.tag)))) throw new Error("目标 Gear 的附加设置发生变化");
             doc.SetModified(true); doc.RefreshInspectors();
         } catch (error) {
@@ -548,7 +672,7 @@ function setGear(params: any): any {
         }
     }
     return { target: targetSummary(obj, params.target), before, after, changed, saved, persisted, documentModified: Boolean(doc.isModified), agentUndoSupported: false,
-        note: "替换目标 Gear 的完整配置；未列页面使用默认值。display 空列表表示所有页可见。布局、自动尺寸和其它 Gear 仍可能影响最终外观，需切页验证。" };
+        note: "替换目标 Gear 完整配置；省略 tween 保留原配置。比例基于父组件尺寸，在切页时重新计算，不添加布局关系。display/display2 空列表表示本 Gear 全页匹配。普通设计态切页通常即时应用，缓动需原生运行预览验证。" };
 }
 
 /** 当前文档根组件的控制器；嵌套组件应先打开其所属文档，避免改错资源。 */
@@ -1465,7 +1589,7 @@ function writeStatus(): void {
             "redo",
             "verify_document", "replace_object_resource", "get_text_style", "set_text_style",
             "get_loader3d", "set_loader3d", "capture_document", "fix_spine_anchor",
-            "get_gears", "set_gear", "get_controller_actions", "upsert_controller_action", "remove_controller_action",
+            "get_gears", "set_gear", "remove_gear", "gear_advanced", "gear_tween", "gear_xy_percent", "get_controller_actions", "upsert_controller_action", "remove_controller_action",
             "controller_home_settings", "controller_action_follow", "get_controller_references", "rename_controller", "remove_controller", "remove_controller_page", "reorder_controller_pages", "reorder_controller_actions",
             "get_controllers", "create_controller", "add_controller_page", "rename_controller_page", "set_controller_page",
             "apply_batch", "get_batch_result", "get_objects", "capture_states", "begin_external_edit", "finish_external_edit",
@@ -3995,7 +4119,8 @@ function finishEditingWrite(doc: any, obj: any, before: any, after: any, params:
     let saved = false, persisted = false;
     if (params.save === true) {
         try {
-            const expected = gearXmlData(obj.Write());
+            // 根定义与实例的序列化入口不同，根尺寸等设置必须按完整定义校验。
+            const expected = gearXmlData(obj === doc.content ? obj.Write_editMode() : obj.Write());
             doc.Save();
             if (doc.isModified) throw new Error("保存后组件仍有未保存修改");
             saved = true;
@@ -5450,7 +5575,8 @@ const BATCH_FIELDS: { [action: string]: string[] } = {
     replace_object_resource: ["target", "resourceURL", "expectedType", "preserveSize"],
     set_scroll_settings: ["target", "settings"], set_loader: ["target", "settings"], set_group: ["target", "groupId"],
     add_relation: ["target", "relationTargetId", "relationType", "usePercent"], remove_relation: ["target", "relationTargetId", "relationType"],
-    set_gear: ["target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds"],
+    set_gear: ["target", "gearType", "controllerName", "defaultValue", "pageValues", "visiblePageIds", "positionsInPercent", "tween", "condition"],
+    remove_gear: ["target", "gearType"],
     create_controller: ["name", "pages"], set_controller_page: ["controllerName", "pageId", "pageName", "pageIndex"],
     set_component_instance_controller: ["target", "controllerName", "pageId", "pageName", "pageIndex"],
     set_component_instance_property: ["target", "childPath", "propertyId", "value"],
@@ -5748,7 +5874,7 @@ function handleCommand(request: AgentRequest): any {
         get_progress_settings: true, set_progress_settings: true, get_slider_settings: true, set_slider_settings: true, get_combo_settings: true, set_combo_settings: true,
         get_graph_settings: true, set_graph_settings: true, get_image_display: true, set_image_display: true, get_filter_settings: true, set_filter_settings: true,
         set_text_style: true, replace_object_resource: true,
-        set_gear: true,
+        set_gear: true, remove_gear: true,
         upsert_controller_action: true, remove_controller_action: true, get_controller_references: true, rename_controller: true, remove_controller: true, remove_controller_page: true, reorder_controller_pages: true, reorder_controller_actions: true,
         create_controller: true, add_controller_page: true, rename_controller_page: true, set_controller_page: true,
         get_loader3d: true, set_loader3d: true, capture_document: true, fix_spine_anchor: true,
@@ -5843,6 +5969,7 @@ function handleCommand(request: AgentRequest): any {
         case "get_controller_actions": return getControllerActions(params);
         case "upsert_controller_action": case "remove_controller_action": return editControllerAction(action, params);
         case "set_gear": return setGear(params);
+        case "remove_gear": return removeGear(params);
         case "get_controller_references": return scanControllerReferences(params);
         case "rename_controller": case "remove_controller": case "remove_controller_page": case "reorder_controller_pages": case "reorder_controller_actions": return editControllerLifecycle(action, params);
         case "get_controllers": return { documentUrl: getActiveDocument().content.resourceURL, controllers: controllerList(getActiveDocument()).map(controllerSnapshot) };

@@ -232,10 +232,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_target_arguments(gear_get)
     gear_set = subparsers.add_parser("set-gear", help="完整替换一个 Gear，保留其它 Gear，默认不保存")
     _add_target_arguments(gear_set)
-    gear_set.add_argument("gear_type", choices=["display", "text", "icon", "xy", "size", "color"])
+    gear_set.add_argument("gear_type", choices=["display", "text", "icon", "xy", "size", "color", "look", "animation", "font_size", "display2"])
     gear_set.add_argument("controller_name")
     gear_set.add_argument("config", help="JSON：defaultValue/pageValues 或 display 的 visiblePageIds（空数组代表全显示）")
     gear_set.add_argument("--save", action="store_true")
+    gear_remove = subparsers.add_parser("remove-gear", help="删除整个 Gear 并解绑，保留当前普通显示值")
+    _add_target_arguments(gear_remove)
+    gear_remove.add_argument("gear_type", choices=["display", "text", "icon", "xy", "size", "color", "look", "animation", "font_size", "display2"])
+    gear_remove.add_argument("--save", action="store_true")
     controller_create = subparsers.add_parser("create-controller", help="创建控制器，默认不保存")
     controller_create.add_argument("name")
     controller_create.add_argument("--pages", nargs="*", default=[], help="初始页面名称，省略创建空控制器")
@@ -734,9 +738,12 @@ def main() -> int:
         elif args.command == "set-gear":
             action = "set_gear"
             config = load_json_value(args.config)
-            if not isinstance(config, dict) or set(config) - {"defaultValue", "pageValues", "visiblePageIds"}:
-                raise ValueError("config 仅支持 defaultValue/pageValues/visiblePageIds")
+            if not isinstance(config, dict) or set(config) - {"defaultValue", "pageValues", "visiblePageIds", "positionsInPercent", "tween", "condition"}:
+                raise ValueError("config 仅支持 defaultValue/pageValues/visiblePageIds/positionsInPercent/tween/condition")
             params = {**config, "target": target_from_args(args), "gearType": args.gear_type, "controllerName": args.controller_name, "save": args.save}
+        elif args.command == "remove-gear":
+            action = "remove_gear"
+            params = {"target": target_from_args(args), "gearType": args.gear_type, "save": args.save}
         elif args.command == "create-controller":
             action = "create_controller"
             params = {"name": args.name, "pages": args.pages, "save": args.save}

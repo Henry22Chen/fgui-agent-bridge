@@ -2,11 +2,11 @@
 
 通过 MCP (Model Context Protocol) 或 CLI，让 AI 编程 Agent（如 Cursor、Claude、Codex、VS Code 等）以结构化指令直接操作 FairyGUI Editor，实现自动拼 UI 界面、动效制作与一键发布。
 
-- **版本**：`0.20.0`
+- **版本**：`0.21.0`
 - **队列协议**：`2.0`
 - **已验证 FairyGUI Editor**：`6.1.4`
 - **通信方式**：本地 JSON 队列 + MCP stdio
-- **MCP 工具数**：122；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
+- **MCP 工具数**：123；完整参数与布局枚举见 [当前能力参考](.agents/skills/fgui-agent-bridge/references/current-capabilities.md)
 
 > **说明**：Bridge 仓库与业务 FairyGUI 工程分开存放。FairyGUI 工程只需安装轻量插件；在宿主 IDE 中可按需安装 Skill 提高 AI 操作准确率。
 
@@ -61,7 +61,9 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 
 安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
-当前发布版本为 `0.20.0`，对应 Git 标签 `v0.20.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+当前发布版本为 `0.21.0`，对应 Git 标签 `v0.21.0`。优先遵循业务项目明确指定的发布标签；未指定时使用本节的发布版本。安装来源必须包含标签，不能以默认分支或开发分支替代固定版本。
+
+`0.21.0` 扩展十类结构化 Gear，新增 remove_gear，支持 look、animation、font_size、Display2、百分比 XY 和有名缓动补丁，共123工具。删除整项并解绑，保留当前普通显示值，实际显隐由剩余 Gear 决定。详见[Gear 生命周期](.agents/skills/fgui-agent-bridge/references/gear-lifecycle.md)。
 
 `0.20.0` 新增控制器引用预览、重命名/删除、页面删除/重排、联动重排六个工具，扩展首页与有名跟随模式，共 122 个 MCP 工具；协议仍为 `2.0`。保留稳定页面 ID，写前拒绝外部/未知引用，显式 local 策略同步改名或清理本地引用。详见[控制器生命周期](.agents/skills/fgui-agent-bridge/references/controller-lifecycle.md)。
 
@@ -79,7 +81,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
 源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
-安装版本：0.20.0，Git 标签 v0.20.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
+安装版本：0.21.0，Git 标签 v0.21.0；如目标项目已有明确版本约定，遵循该约定。首次克隆指定 --branch 标签；已有安装先核对工作树，再 fetch 并检出目标标签，不用默认分支代替。
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
@@ -96,7 +98,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
-git clone --branch v0.20.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone --branch v0.21.0 https://github.com/Henry22Chen/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
@@ -104,8 +106,8 @@ uv sync --frozen
 检出标签后处于 detached HEAD 是固定版本安装的正常状态。已有 Bridge 安装先运行 `git status --short` 核对并保留未提交改动，再切换到项目指定的标签：
 
 ```bash
-git fetch origin tag v0.20.0
-git switch --detach v0.20.0
+git fetch origin tag v0.21.0
+git switch --detach v0.21.0
 uv sync --frozen
 ```
 
@@ -482,20 +484,24 @@ CLI：`controllers`、`create-controller State --pages Idle Active --save`、`ad
 
 ## Gear 编辑（0.8.7）
 
-新增 `fgui_get_gears`、`fgui_set_gear`，对应 CLI `get-gears` / `set-gear`。只操作当前文档直属子对象；先读取已有配置，再按稳定页面 ID 编辑。
+使用 `fgui_get_gears`、`fgui_set_gear`、`fgui_remove_gear`，对应 CLI `get-gears` / `set-gear` / `remove-gear`。只操作当前文档直属子对象；先读取已有配置，再按稳定页面 ID 编辑。0.21.0 的高级类型、百分比和缓动完整说明见[Gear 生命周期](.agents/skills/fgui-agent-bridge/references/gear-lifecycle.md)。
 
 | gear_type | 配置 |
 | --- | --- |
 | `display` | `visible_page_ids=["1"]`：仅列出的页面可见；**空数组表示所有页面可见**，这是原生 GearDisplay 语义，不表示全部隐藏 |
 | `text` | 默认值和页面值为字符串，支持空串、换行和 XML 特殊字符；原生 `values` 用竖线分隔，暂不接受包含竖线字符（U+007C）的文本（反斜线也不能转义） |
 | `icon` | 字符串：工程内图片 `ui://` URL，空串清除；用于 Loader、Button 等具有图标语义的对象 |
-| `xy` | `{x, y}`，整数像素；暂不编辑已有百分比位置 Gear |
+| `xy` | `{x, y}`，整数像素；百分比模式另需 percentX/percentY，见0.21.0说明 |
 | `size` | `{width, height, scaleX?, scaleY?}`，宽高非负整数，省略缩放为 1 |
 | `color` | `{color: "#RRGGBB", strokeColor?: "#RRGGBB"}`，省略描边为黑色；不编辑 Alpha |
+| `look` | `{alpha,rotation,grayed,touchable}`；Alpha、旋转、灰化和交互开关 |
+| `animation` | `{frame,playing}`；整数帧和布尔播放状态 |
+| `font_size` | 1..10000 的整数字号 |
+| `display2` | `visible_page_ids` 和 `condition=and/or`，与主 Display 组合 |
 
-除 display 外，`default_value` 与 `page_values` 必须显式提供；`page_values` 格式为 `[{"pageId":"0","value":...}]`，允许空数组，未列出的页使用默认值。坐标/尺寸/缩放绝对值不超过 1000000。重复或不属于目标控制器的页面 ID 会在写入前拒绝；新 Gear 绑定及改绑控制器都通过同一个 set 工具完成。
+除 display/display2 外，`default_value` 与 `page_values` 必须显式提供；`page_values` 格式为 `[{"pageId":"0","value":...}]`，允许空数组，未列出的页使用默认值。坐标/尺寸/缩放绝对值不超过 1000000。重复或不属于目标控制器的页面 ID 会在写入前拒绝；新 Gear 绑定及改绑控制器都通过同一个 set 工具完成。
 
-**set 是目标 Gear 的完整替换，不是页面值补丁。** 会保留其它 Gear，以及目标 Gear 的缓动等附加设置，并在 Editor 回读时验证；不新增缓动配置编辑、解绑或删除 Gear 接口，也不删除控制器页面。读取结果包含六类配置及对象 SupportGear 标记，其它 Gear 以原始 XML 返回；未序列化默认值返回 null，不猜测其值。
+**set 是目标 Gear 的完整替换，不是页面值补丁。** 会保留其它 Gear，以及省略的缓动等附加设置，并在 Editor 回读时验证。读取结果包含十类配置、可编辑能力和当前显示状态；未知 Gear 以原始 XML 返回，未序列化默认值返回 null。
 
 默认不保存，`save=true` 保存整个组件并回读该对象全部 Gear XML。实际修改清空旧 Agent 历史并保持未保存标记，没有完整 Gear/联动撤销；保存或写入失败报告实际状态，不假装回滚。无变化且不保存时保留历史。布局关系、文本 autoSize、对象基础 visible、GearDisplay2、缓动或显示锁仍可能影响最终效果，需切页观察；对象树 visible 是基础属性，不能据此单独断言 GearDisplay 的最终可见性。
 
@@ -510,7 +516,7 @@ fgui_set_gear("display", "State", object_name="badge", visible_page_ids=["1"], s
 
 CLI 示例：`set-gear text State '{"defaultValue":"其他","pageValues":[{"pageId":"1","value":"已领取"}]}' --name title --save`。CLI JSON 使用 camelCase；全局 `--project` 放在子命令前。
 
-截图失败仍要求用户人工验证，保留修改。六类 Gear 的自动回归入口见 `tests/test_gears.py`；临时报告和截图仅本地保存。
+截图失败仍要求用户人工验证，保留修改。基础及高级 Gear 的自动回归入口见 `tests/test_gears.py`、`tests/test_gear_lifecycle.py`；临时报告和截图仅本地保存。
 
 ## 控制器联动（0.8.8）
 
